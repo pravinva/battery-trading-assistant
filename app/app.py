@@ -244,40 +244,12 @@ with st.sidebar:
         "Get battery asset information"
     ]
     
-    # Process quick queries if triggered
-    if "quick_query" in st.session_state and st.session_state.quick_query:
-        query = st.session_state.quick_query
-        st.session_state.quick_query = None  # Clear it
-        
-        if AGENT_AVAILABLE:
-            # Add user message
-            st.session_state.messages.append({"role": "user", "content": query})
-            
-            # Get agent response
-            try:
-                response = agent.invoke({
-                    "messages": [
-                        SystemMessage(content=SYSTEM_PROMPT),
-                        HumanMessage(content=query)
-                    ]
-                })
-                
-                assistant_response = response["messages"][-1].content
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": assistant_response
-                })
-            except Exception as e:
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": f"Sorry, I encountered an error: {str(e)}"
-                })
-    
+    # Quick query buttons - just set the query, processing happens in main area
     for query in quick_queries:
         if st.button(f"💬 {query[:40]}...", key=f"quick_{hash(query)}"):
             if AGENT_AVAILABLE:
-                st.session_state.quick_query = query
-                st.rerun()
+                # Set query to be processed in main area
+                st.session_state.pending_query = query
             else:
                 st.error("Agent not available")
     
@@ -304,6 +276,46 @@ st.markdown("### 💬 Chat with Assistant")
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+
+# Process pending query from sidebar (non-blocking)
+if "pending_query" in st.session_state and st.session_state.pending_query:
+    prompt = st.session_state.pending_query
+    st.session_state.pending_query = None  # Clear it
+    
+    # Add user message
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    
+    # Get agent response
+    with st.chat_message("assistant"):
+        with st.spinner("🤔 Thinking..."):
+            try:
+                # Invoke agent
+                response = agent.invoke({
+                    "messages": [
+                        SystemMessage(content=SYSTEM_PROMPT),
+                        HumanMessage(content=prompt)
+                    ]
+                })
+                
+                # Get assistant response
+                assistant_response = response["messages"][-1].content
+                st.markdown(assistant_response)
+                
+                # Add to session state
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": assistant_response
+                })
+                
+            except Exception as e:
+                error_msg = f"Sorry, I encountered an error: {str(e)}"
+                st.error(error_msg)
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": error_msg
+                })
 
 # Chat input - process immediately
 if AGENT_AVAILABLE:
