@@ -180,10 +180,21 @@ if attachments:
         elif isinstance(attachment, dict):
             text = attachment.get('text')
         
+        # Query is a GenieQueryAttachment object, extract the actual query string
         if hasattr(attachment, 'query'):
-            query = attachment.query
+            query_obj = attachment.query
+            if hasattr(query_obj, 'query'):
+                query = query_obj.query  # Extract the SQL string
+            elif isinstance(query_obj, dict):
+                query = query_obj.get('query')
+            elif isinstance(query_obj, str):
+                query = query_obj
         elif isinstance(attachment, dict):
-            query = attachment.get('query')
+            query_obj = attachment.get('query')
+            if isinstance(query_obj, dict):
+                query = query_obj.get('query')
+            elif isinstance(query_obj, str):
+                query = query_obj
         
         if hasattr(attachment, 'attachment_id'):
             attachment_id = attachment.attachment_id

@@ -850,7 +850,12 @@ The agent cannot proceed without Genie's answer."""
         raise Exception(error_msg)
 
 # Configuration for Genie
-GENIE_ROOM_ID = os.environ.get("GENIE_ROOM_ID", None)  # Set this to your Genie room ID
+# Try to get from environment variable, or use default if set
+GENIE_ROOM_ID = os.environ.get("GENIE_ROOM_ID", None)
+if not GENIE_ROOM_ID:
+    # Try to read from a config file or use a default
+    # Default Genie room ID (can be overridden with environment variable)
+    GENIE_ROOM_ID = "01f0bca10415147a91fe3c98f80e596e"  # Battery Trading Agent space
 
 # Combine all tools - ONLY Genie for SQL queries, no predefined SQL tools
 tools = [search_battery_docs, query_genie]
