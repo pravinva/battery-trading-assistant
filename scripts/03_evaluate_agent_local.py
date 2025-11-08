@@ -23,8 +23,16 @@ from langchain_core.messages import HumanMessage, SystemMessage
 # Configure MLflow to use Databricks workspace (not local)
 mlflow.set_registry_uri("databricks-uc")
 # Set experiment to your workspace path
+# Note: MLflow experiments use /Users/ not /Workspace/Users/
 EXPERIMENT_NAME = "/Users/pravin.varma@databricks.com/battery_agent_evaluation"
-mlflow.set_experiment(EXPERIMENT_NAME)
+try:
+    mlflow.set_experiment(EXPERIMENT_NAME)
+except Exception as e:
+    print(f"⚠️  Could not set experiment: {e}")
+    print(f"   Trying alternative path format...")
+    # Try alternative format
+    EXPERIMENT_NAME = f"/Users/{os.environ.get('USER', 'pravin.varma@databricks.com')}/battery_agent_evaluation"
+    mlflow.set_experiment(EXPERIMENT_NAME)
 print(f"✅ MLflow experiment set to: {EXPERIMENT_NAME}")
 print("   (Results will appear in Databricks MLflow UI, not local mlruns)\n")
 
