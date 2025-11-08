@@ -278,13 +278,16 @@ When answering:
 - Combine both when needed for comprehensive answers"""
 
 # Initialize LLM
-print("\n🔧 Initializing LLM...")
+# Only print when running directly (not when imported)
+if __name__ == "__main__":
+    print("\n🔧 Initializing LLM...")
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore")
     llm = ChatDatabricks(endpoint=LLM_ENDPOINT, temperature=0.1)
 
 # Create LangGraph agent
-print("🔧 Creating LangGraph ReAct agent...")
+if __name__ == "__main__":
+    print("🔧 Creating LangGraph ReAct agent...")
 # Use langgraph prebuilt - system prompt will be added via messages
 from langgraph.prebuilt import create_react_agent
 agent = create_react_agent(
@@ -292,12 +295,15 @@ agent = create_react_agent(
     tools
 )
 
-print("✅ Agent created successfully!\n")
+if __name__ == "__main__":
+    print("✅ Agent created successfully!\n")
 
-# Test Agent
-print("=" * 80)
-print("Testing Agent")
-print("=" * 80)
+# Only run tests if script is executed directly (not imported)
+if __name__ == "__main__":
+    # Test Agent
+    print("=" * 80)
+    print("Testing Agent")
+    print("=" * 80)
 
 # Test 1: Structured data query
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -348,56 +354,56 @@ response = agent.invoke({
 })
 print(response["messages"][-1].content)
 
-# Log Agent to MLflow
-print("\n" + "=" * 80)
-print("Logging Agent to MLflow")
-print("=" * 80)
+    # Log Agent to MLflow
+    print("\n" + "=" * 80)
+    print("Logging Agent to MLflow")
+    print("=" * 80)
 
-try:
-    from mlflow.models.resources import (
-        DatabricksVectorSearchIndex,
-        DatabricksServingEndpoint,
-    )
+    try:
+        from mlflow.models.resources import (
+            DatabricksVectorSearchIndex,
+            DatabricksServingEndpoint,
+        )
 
-    input_example = {
-        "messages": [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content="What is RESS2 current SoC?")
-        ]
-    }
+        input_example = {
+            "messages": [
+                SystemMessage(content=SYSTEM_PROMPT),
+                HumanMessage(content="What is RESS2 current SoC?")
+            ]
+        }
 
-    with mlflow.start_run(run_name="battery_agent_v1_local"):
-        try:
-            logged_agent = mlflow.langchain.log_model(
-                lc_model=agent,
-                artifact_path="agent",
-                input_example=input_example,
-                resources=[
-                    DatabricksVectorSearchIndex(index_name=INDEX_NAME),
-                    DatabricksServingEndpoint(endpoint_name=LLM_ENDPOINT),
-                ],
-            )
-            
-            run_id = mlflow.active_run().info.run_id
-            
-            print(f"✅ Logged agent to MLflow")
-            print(f"   Run ID: {run_id}")
-            print(f"   Model URI: runs:/{run_id}/agent")
-            
-            # Test logged model
-            print("\n🧪 Testing logged model...")
-            predictions = mlflow.langchain.load_model(f"runs:/{run_id}/agent").invoke(input_example)
-            print(f"✅ Logged model test successful:")
-            print(predictions["messages"][-1].content[:200] + "...")
-            
-        except Exception as e:
-            print(f"⚠️  MLflow logging failed (LangGraph compatibility issue): {e}")
-            print("   This is expected - LangGraph agents need special handling for MLflow")
-            print("   The agent is fully functional and can be used directly")
-            run_id = None
-except Exception as e:
-    print(f"⚠️  MLflow logging skipped: {e}")
-    run_id = None
+        with mlflow.start_run(run_name="battery_agent_v1_local"):
+            try:
+                logged_agent = mlflow.langchain.log_model(
+                    lc_model=agent,
+                    artifact_path="agent",
+                    input_example=input_example,
+                    resources=[
+                        DatabricksVectorSearchIndex(index_name=INDEX_NAME),
+                        DatabricksServingEndpoint(endpoint_name=LLM_ENDPOINT),
+                    ],
+                )
+                
+                run_id = mlflow.active_run().info.run_id
+                
+                print(f"✅ Logged agent to MLflow")
+                print(f"   Run ID: {run_id}")
+                print(f"   Model URI: runs:/{run_id}/agent")
+                
+                # Test logged model
+                print("\n🧪 Testing logged model...")
+                predictions = mlflow.langchain.load_model(f"runs:/{run_id}/agent").invoke(input_example)
+                print(f"✅ Logged model test successful:")
+                print(predictions["messages"][-1].content[:200] + "...")
+                
+            except Exception as e:
+                print(f"⚠️  MLflow logging failed (LangGraph compatibility issue): {e}")
+                print("   This is expected - LangGraph agents need special handling for MLflow")
+                print("   The agent is fully functional and can be used directly")
+                run_id = None
+    except Exception as e:
+        print(f"⚠️  MLflow logging skipped: {e}")
+        run_id = None
 
 print("\n" + "=" * 80)
 print("AGENT DEVELOPMENT COMPLETE")

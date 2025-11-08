@@ -15,27 +15,34 @@ from langchain_core.messages import HumanMessage, SystemMessage
 import importlib.util
 from pathlib import Path
 
-# Try to import agent - handle if not available
-# Note: Can't use normal import because module name starts with number
-AGENT_AVAILABLE = False
-AGENT_ERROR = None
-agent = None
-SYSTEM_PROMPT = None
-
-try:
-    agent_script_path = Path(__file__).parent.parent / "scripts" / "02_agent_development_local.py"
-    if agent_script_path.exists():
-        spec = importlib.util.spec_from_file_location("agent_module", agent_script_path)
-        agent_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(agent_module)
-        agent = agent_module.agent
-        SYSTEM_PROMPT = agent_module.SYSTEM_PROMPT
-        AGENT_AVAILABLE = True
-    else:
-        AGENT_ERROR = f"Agent script not found at {agent_script_path}"
-except Exception as e:
+# Cache agent initialization to avoid reloading on every page refresh
+@st.cache_resource
+def load_agent():
+    """Load agent lazily - only when needed"""
     AGENT_AVAILABLE = False
-    AGENT_ERROR = str(e)
+    AGENT_ERROR = None
+    agent = None
+    SYSTEM_PROMPT = None
+    
+    try:
+        agent_script_path = Path(__file__).parent.parent / "scripts" / "02_agent_development_local.py"
+        if agent_script_path.exists():
+            spec = importlib.util.spec_from_file_location("agent_module", agent_script_path)
+            agent_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(agent_module)
+            agent = agent_module.agent
+            SYSTEM_PROMPT = agent_module.SYSTEM_PROMPT
+            AGENT_AVAILABLE = True
+        else:
+            AGENT_ERROR = f"Agent script not found at {agent_script_path}"
+    except Exception as e:
+        AGENT_AVAILABLE = False
+        AGENT_ERROR = str(e)
+    
+    return AGENT_AVAILABLE, agent, SYSTEM_PROMPT, AGENT_ERROR
+
+# Load agent (cached)
+AGENT_AVAILABLE, agent, SYSTEM_PROMPT, AGENT_ERROR = load_agent()
 
 # Page config
 st.set_page_config(
@@ -237,32 +244,40 @@ with st.sidebar:
         "Get battery asset information"
     ]
     
+    # Process quick queries if triggered
+    if "quick_query" in st.session_state and st.session_state.quick_query:
+        query = st.session_state.quick_query
+        st.session_state.quick_query = None  # Clear it
+        
+        if AGENT_AVAILABLE:
+            # Add user message
+            st.session_state.messages.append({"role": "user", "content": query})
+            
+            # Get agent response
+            try:
+                response = agent.invoke({
+                    "messages": [
+                        SystemMessage(content=SYSTEM_PROMPT),
+                        HumanMessage(content=query)
+                    ]
+                })
+                
+                assistant_response = response["messages"][-1].content
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": assistant_response
+                })
+            except Exception as e:
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"Sorry, I encountered an error: {str(e)}"
+                })
+    
     for query in quick_queries:
         if st.button(f"💬 {query[:40]}...", key=f"quick_{hash(query)}"):
             if AGENT_AVAILABLE:
-                # Add user message
-                st.session_state.messages.append({"role": "user", "content": query})
-                
-                # Get agent response
-                with st.spinner("🤔 Thinking..."):
-                    try:
-                        response = agent.invoke({
-                            "messages": [
-                                SystemMessage(content=SYSTEM_PROMPT),
-                                HumanMessage(content=query)
-                            ]
-                        })
-                        
-                        assistant_response = response["messages"][-1].content
-                        st.session_state.messages.append({
-                            "role": "assistant",
-                            "content": assistant_response
-                        })
-                    except Exception as e:
-                        st.session_state.messages.append({
-                            "role": "assistant",
-                            "content": f"Sorry, I encountered an error: {str(e)}"
-                        })
+                st.session_state.quick_query = query
+                st.rerun()
             else:
                 st.error("Agent not available")
     
