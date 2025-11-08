@@ -182,9 +182,13 @@ if "messages" not in st.session_state:
 col1, col2 = st.columns([1, 4])
 with col1:
     logo_path = Path(__file__).parent.parent / "logo.png"
-    if logo_path.exists():
-        st.image(str(logo_path), width=120)
-    else:
+    try:
+        if logo_path.exists():
+            st.image(str(logo_path), width=120)
+        else:
+            st.markdown("### 🔋")
+    except Exception as e:
+        # If image loading fails (e.g., PIL not installed), show icon
         st.markdown("### 🔋")
 
 with col2:
