@@ -297,20 +297,12 @@ ALTER COLUMN content COMMENT 'Chunked text content from battery integration docu
 print("✅ Created battery_documents table")
 
 # COMMAND ----------
-# Create Vector Search endpoint and index
+# Create Vector Search index using existing endpoint
 vsc = VectorSearchClient(disable_notice=True)
 
-# Create endpoint (only once per workspace)
-endpoint_name = "ea_trading_endpoint"
-
-try:
-    vsc.create_endpoint(name=endpoint_name, endpoint_type="STANDARD")
-    print(f"✅ Created Vector Search endpoint: {endpoint_name}")
-except Exception as e:
-    if "RESOURCE_ALREADY_EXISTS" in str(e):
-        print(f"✅ Vector Search endpoint already exists: {endpoint_name}")
-    else:
-        raise e
+# Use existing shared endpoint
+endpoint_name = "one-env-shared-endpoint-10"
+print(f"✅ Using Vector Search endpoint: {endpoint_name}")
 
 # COMMAND ----------
 # Create Vector Search Index

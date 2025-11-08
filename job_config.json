@@ -1,0 +1,86 @@
+{
+  "name": "battery-trading-assistant-pipeline-serverless",
+  "tasks": [
+    {
+      "task_key": "01_data_preparation",
+      "description": "Create Delta tables and Vector Search index",
+      "notebook_task": {
+        "notebook_path": "/Users/pravin.varma@databricks.com/battery-trading/01_data_preparation"
+      },
+      "compute": [
+        {
+          "compute_key": "serverless_compute",
+          "spec": {
+            "kind": "serverless"
+          }
+        }
+      ],
+      "timeout_seconds": 3600
+    },
+    {
+      "task_key": "02_agent_development",
+      "description": "Build agent with tools and LangGraph",
+      "depends_on": [
+        {
+          "task_key": "01_data_preparation"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "/Users/pravin.varma@databricks.com/battery-trading/02_agent_development"
+      },
+      "compute": [
+        {
+          "compute_key": "serverless_compute",
+          "spec": {
+            "kind": "serverless"
+          }
+        }
+      ],
+      "timeout_seconds": 3600
+    },
+    {
+      "task_key": "03_agent_evaluation",
+      "description": "Evaluate agent performance",
+      "depends_on": [
+        {
+          "task_key": "02_agent_development"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "/Users/pravin.varma@databricks.com/battery-trading/03_agent_evaluation"
+      },
+      "compute": [
+        {
+          "compute_key": "serverless_compute",
+          "spec": {
+            "kind": "serverless"
+          }
+        }
+      ],
+      "timeout_seconds": 3600
+    },
+    {
+      "task_key": "04_deployment",
+      "description": "Deploy agent to Model Serving and create App",
+      "depends_on": [
+        {
+          "task_key": "03_agent_evaluation"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "/Users/pravin.varma@databricks.com/battery-trading/04_deployment"
+      },
+      "compute": [
+        {
+          "compute_key": "serverless_compute",
+          "spec": {
+            "kind": "serverless"
+          }
+        }
+      ],
+      "timeout_seconds": 3600
+    }
+  ],
+  "format": "MULTI_TASK"
+}
+
