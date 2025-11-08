@@ -309,15 +309,22 @@ Question asked: {question}"""
         conversation_wait = genie.start_conversation(GENIE_ROOM_ID, question)
         
         # Wait for the conversation to complete and get the message
-        # The Wait object needs to be resolved
-        if hasattr(conversation_wait, 'result'):
-            message = conversation_wait.result()
-        elif hasattr(conversation_wait, 'get'):
-            message = conversation_wait.get()
-        elif hasattr(conversation_wait, 'wait'):
-            message = conversation_wait.wait()
-        else:
-            # If it's already resolved, use it directly
+        # Wait objects in Databricks SDK can be used directly or awaited
+        # Try to get the result - Wait objects typically have a result() method or can be iterated
+        try:
+            # Try calling result() if it exists
+            if callable(getattr(conversation_wait, 'result', None)):
+                message = conversation_wait.result()
+            # Try iterating (Wait objects are iterable)
+            elif hasattr(conversation_wait, '__iter__'):
+                # Get the last item from the iterator
+                for msg in conversation_wait:
+                    message = msg
+            else:
+                # If it's already resolved, use it directly
+                message = conversation_wait
+        except Exception as e:
+            # If Wait handling fails, try to use it directly
             message = conversation_wait
         
         # Try to extract SQL query from Genie response
