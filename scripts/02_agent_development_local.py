@@ -305,54 +305,54 @@ if __name__ == "__main__":
     print("Testing Agent")
     print("=" * 80)
 
-# Test 1: Structured data query
-from langchain_core.messages import HumanMessage, SystemMessage
-test_query_1 = "What is the current SoC for RESS2?"
-print(f"\n📝 Query 1: {test_query_1}")
-print("-" * 80)
-response = agent.invoke({
-    "messages": [
-        SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(content=test_query_1)
-    ]
-})
-print(response["messages"][-1].content)
+    # Test 1: Structured data query
+    from langchain_core.messages import HumanMessage, SystemMessage
+    test_query_1 = "What is the current SoC for RESS2?"
+    print(f"\n📝 Query 1: {test_query_1}")
+    print("-" * 80)
+    response = agent.invoke({
+        "messages": [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=test_query_1)
+        ]
+    })
+    print(response["messages"][-1].content)
 
-# Test 2: Unstructured documentation query
-test_query_2 = "How is throughput calculated for batteries and why does it matter?"
-print(f"\n📝 Query 2: {test_query_2}")
-print("-" * 80)
-response = agent.invoke({
-    "messages": [
-        SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(content=test_query_2)
-    ]
-})
-print(response["messages"][-1].content)
+    # Test 2: Unstructured documentation query
+    test_query_2 = "How is throughput calculated for batteries and why does it matter?"
+    print(f"\n📝 Query 2: {test_query_2}")
+    print("-" * 80)
+    response = agent.invoke({
+        "messages": [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=test_query_2)
+        ]
+    })
+    print(response["messages"][-1].content)
 
-# Test 3: Hybrid query
-test_query_3 = "What's DPNTBESS current SoC and what are the SoC limits for availability?"
-print(f"\n📝 Query 3: {test_query_3}")
-print("-" * 80)
-response = agent.invoke({
-    "messages": [
-        SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(content=test_query_3)
-    ]
-})
-print(response["messages"][-1].content)
+    # Test 3: Hybrid query
+    test_query_3 = "What's DPNTBESS current SoC and what are the SoC limits for availability?"
+    print(f"\n📝 Query 3: {test_query_3}")
+    print("-" * 80)
+    response = agent.invoke({
+        "messages": [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=test_query_3)
+        ]
+    })
+    print(response["messages"][-1].content)
 
-# Test 4: Revenue analysis
-test_query_4 = "Show me the revenue performance for RESS2 in the last 24 hours"
-print(f"\n📝 Query 4: {test_query_4}")
-print("-" * 80)
-response = agent.invoke({
-    "messages": [
-        SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(content=test_query_4)
-    ]
-})
-print(response["messages"][-1].content)
+    # Test 4: Revenue analysis
+    test_query_4 = "Show me the revenue performance for RESS2 in the last 24 hours"
+    print(f"\n📝 Query 4: {test_query_4}")
+    print("-" * 80)
+    response = agent.invoke({
+        "messages": [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=test_query_4)
+        ]
+    })
+    print(response["messages"][-1].content)
 
     # Log Agent to MLflow
     print("\n" + "=" * 80)
