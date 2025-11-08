@@ -310,7 +310,7 @@ Question asked: {question}"""
         
         # Wait for the conversation to complete and get the message
         # Wait objects in Databricks SDK can be used directly or awaited
-        # Try to get the result - Wait objects typically have a result() method or can be iterated
+        message = None
         try:
             # Try calling result() if it exists
             if callable(getattr(conversation_wait, 'result', None)):
@@ -327,69 +327,116 @@ Question asked: {question}"""
             # If Wait handling fails, try to use it directly
             message = conversation_wait
         
-        # Try to extract SQL query from Genie response
+        # Extract message ID to fetch detailed results
+        message_id = None
+        if hasattr(message, 'message_id'):
+            message_id = message.message_id
+        elif hasattr(message, 'id'):
+            message_id = message.id
+        elif isinstance(message, dict):
+            message_id = message.get('message_id') or message.get('id')
+        
+        # Try to get the full message details including SQL and results
         sql_query = None
         genie_response = None
-        
-        # Get message ID to fetch query result
-        message_id = getattr(message, 'message_id', None) or getattr(message, 'id', None)
+        query_data = None
         
         if message_id:
             try:
-                # Get query result which may contain SQL
-                query_result = genie.get_message_query_result(message_id=message_id)
-                if query_result:
-                    # Try to extract SQL from various possible attributes
-                    if hasattr(query_result, 'sql_query'):
-                        sql_query = query_result.sql_query
-                    elif hasattr(query_result, 'query'):
-                        sql_query = query_result.query
-                    elif hasattr(query_result, 'sql'):
-                        sql_query = query_result.sql
-                    elif isinstance(query_result, dict):
-                        sql_query = query_result.get('sql_query') or query_result.get('query') or query_result.get('sql')
-            except Exception:
-                pass  # SQL extraction is optional
-        
-        # Get the response content
-        if hasattr(message, 'content'):
-            genie_response = message.content
-        elif hasattr(message, 'answer'):
-            genie_response = message.answer
-        else:
-            if message_id:
+                # Get the message details - this should contain the answer
+                message_details = genie.get_message(message_id=message_id)
+                
+                # Extract answer/content from message details
+                if hasattr(message_details, 'content'):
+                    genie_response = message_details.content
+                elif hasattr(message_details, 'answer'):
+                    genie_response = message_details.answer
+                elif hasattr(message_details, 'text'):
+                    genie_response = message_details.text
+                elif isinstance(message_details, dict):
+                    genie_response = message_details.get('content') or message_details.get('answer') or message_details.get('text')
+                
+                # Try to get query result which contains SQL and data
                 try:
-                    result = genie.get_message_query_result(message_id=message_id)
-                    if result and hasattr(result, 'data'):
-                        genie_response = str(result.data)
-                    else:
-                        genie_response = str(result)
-                except Exception:
-                    genie_response = str(message)
+                    query_result = genie.get_message_query_result(message_id=message_id)
+                    if query_result:
+                        # Extract SQL query
+                        if hasattr(query_result, 'sql_query'):
+                            sql_query = query_result.sql_query
+                        elif hasattr(query_result, 'query'):
+                            sql_query = query_result.query
+                        elif hasattr(query_result, 'sql'):
+                            sql_query = query_result.sql
+                        elif hasattr(query_result, 'query_text'):
+                            sql_query = query_result.query_text
+                        elif isinstance(query_result, dict):
+                            sql_query = (query_result.get('sql_query') or 
+                                        query_result.get('query') or 
+                                        query_result.get('sql') or
+                                        query_result.get('query_text'))
+                        
+                        # Extract query data/results
+                        if hasattr(query_result, 'data'):
+                            query_data = query_result.data
+                        elif hasattr(query_result, 'result'):
+                            query_data = query_result.result
+                        elif hasattr(query_result, 'rows'):
+                            query_data = query_result.rows
+                        elif isinstance(query_result, dict):
+                            query_data = (query_result.get('data') or 
+                                         query_result.get('result') or 
+                                         query_result.get('rows'))
+                except Exception as e:
+                    # Query result extraction failed, but we can still use message content
+                    pass
+                    
+            except Exception as e:
+                # If get_message fails, try alternative approaches
+                pass
+        
+        # Fallback: Extract from message object directly
+        if not genie_response:
+            if hasattr(message, 'content'):
+                genie_response = message.content
+            elif hasattr(message, 'answer'):
+                genie_response = message.answer
+            elif hasattr(message, 'text'):
+                genie_response = message.text
+            elif isinstance(message, dict):
+                genie_response = message.get('content') or message.get('answer') or message.get('text')
             else:
                 genie_response = str(message)
         
-        # Format response to show SQL query prominently
+        # Format the response with SQL and results
+        response_parts = []
+        
         if sql_query:
-            return f"""🤖 **Databricks Genie Generated SQL:**
-
-```sql
-{sql_query}
-```
-
-**Results:**
-{genie_response}
-
----
-*Note: This SQL was dynamically generated by Genie based on your natural language question.*"""
-        else:
-            # If we can't extract SQL, still return response but note it's from Genie
-            return f"""🤖 **Databricks Genie Response:**
-
-{genie_response}
-
----
-*Note: Genie dynamically generated and executed SQL queries to answer your question. The SQL query details are available in the Genie conversation.*"""
+            response_parts.append(f"🤖 **Databricks Genie Generated SQL:**\n\n```sql\n{sql_query}\n```")
+        
+        if query_data:
+            # Format query data nicely
+            if isinstance(query_data, list):
+                if query_data:
+                    response_parts.append(f"\n**Query Results:**\n```\n{str(query_data)}\n```")
+                else:
+                    response_parts.append("\n**Query Results:** No data returned (NULL or empty result)")
+            elif isinstance(query_data, dict):
+                response_parts.append(f"\n**Query Results:**\n```json\n{str(query_data)}\n```")
+            else:
+                response_parts.append(f"\n**Query Results:**\n{str(query_data)}")
+        
+        if genie_response and genie_response != question:
+            # Only include genie_response if it's different from the question
+            response_parts.append(f"\n**Genie Answer:**\n{genie_response}")
+        
+        if not response_parts:
+            # If we got nothing useful, return the question (shouldn't happen)
+            response_parts.append(f"Genie processed your question: {question}\n\nNote: SQL and results may be available in the Genie conversation.")
+        
+        response = "\n".join(response_parts)
+        response += "\n\n---\n*Note: This SQL was dynamically generated by Genie based on your natural language question.*"
+        
+        return response
         
     except Exception as e:
         # Don't return error message - raise exception so agent doesn't fall back to other tools
