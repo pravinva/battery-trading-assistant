@@ -599,13 +599,14 @@ if AGENT_AVAILABLE:
                             with st.expander("💾 SQL Query Results", expanded=False):
                                 for idx, sql_result in enumerate(sources["sql_queries"], 1):
                                     tool_name = sql_result['tool']
-                                    if tool_name == 'execute_custom_sql':
-                                        st.markdown(f"**Tool:** `{tool_name}` (Custom SQL - Genie-like)")
-                                        if 'sql_query' in sql_result['args']:
-                                            st.code(sql_result['args']['sql_query'], language='sql')
+                                    if tool_name == 'query_genie':
+                                        st.markdown(f"**Tool:** `{tool_name}` (Databricks Genie)")
+                                        if 'question' in sql_result.get('args', {}):
+                                            st.markdown(f"**Question:** {sql_result['args']['question']}")
                                     else:
                                         st.markdown(f"**Tool:** `{tool_name}`")
-                                        st.markdown(f"**Arguments:** `{json.dumps(sql_result['args'], indent=2)}`")
+                                        if sql_result.get('args'):
+                                            st.markdown(f"**Arguments:** `{json.dumps(sql_result['args'], indent=2)}`")
                                     st.text_area("Result:", sql_result['result'], height=200, key=f"chat_sql_{idx}", label_visibility="collapsed")
                     
                     # Add to session state with sources

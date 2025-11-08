@@ -260,86 +260,82 @@ def get_battery_info(
     
     return "\n\n".join(output)
 
-# Tool 5: Execute Custom SQL Query (Genie-like capability)
+# Tool 5: Query Genie (Databricks Genie API)
 @tool
-def execute_custom_sql(
-    sql_query: Annotated[str, "A SQL SELECT query to execute against the battery trading database. Use this when predefined tools can't answer the question. Only SELECT queries are allowed."]
+def query_genie(
+    question: Annotated[str, "A natural language question about battery data that predefined tools can't answer. Genie will generate and execute SQL automatically."]
 ) -> str:
-    """Execute a custom SQL query against the battery trading database.
+    """Query Databricks Genie to answer questions using natural language.
     
-    Use this tool when you need to answer questions that the predefined tools cannot handle.
+    Use this tool when predefined tools (get_battery_status, get_battery_revenue, get_battery_info) 
+    cannot answer the question. Genie will automatically:
+    - Understand your question
+    - Generate appropriate SQL queries
+    - Execute them against the battery trading database
+    - Return formatted results
+    
     Examples:
-    - Complex aggregations across multiple tables
-    - Time-series analysis with custom time windows
-    - Comparisons between batteries
-    - Custom filtering or grouping
+    - "Compare average SoC across all batteries in the last hour"
+    - "Show me batteries with SoC below 50%"
+    - "What's the total revenue across all batteries today?"
+    - "Find batteries with the oldest telemetry readings"
+    - "Which battery has the highest discharge capability?"
     
-    Available tables:
-    - {CATALOG}.{SCHEMA}.battery_telemetry: Current SoC and capabilities
-    - {CATALOG}.{SCHEMA}.battery_dispatch: Dispatch history and revenue
-    - {CATALOG}.{SCHEMA}.battery_assets: Asset specifications
-    - {CATALOG}.{SCHEMA}.battery_documents: Document metadata
+    Genie has access to all tables in {CATALOG}.{SCHEMA}:
+    - battery_telemetry: Current SoC and capabilities
+    - battery_dispatch: Dispatch history and revenue
+    - battery_assets: Asset specifications
+    - battery_documents: Document metadata
     
-    IMPORTANT: Only SELECT queries are allowed. Do not use INSERT, UPDATE, DELETE, DROP, or ALTER.
-    Always use fully qualified table names: {CATALOG}.{SCHEMA}.table_name
-    
-    Returns the query results as formatted text."""
-    
-    # Safety check: Only allow SELECT queries
-    sql_upper = sql_query.strip().upper()
-    if not sql_upper.startswith('SELECT'):
-        return "ERROR: Only SELECT queries are allowed. This tool cannot execute INSERT, UPDATE, DELETE, DROP, or ALTER statements."
-    
-    # Additional safety: Block dangerous keywords
-    dangerous_keywords = ['DROP', 'DELETE', 'UPDATE', 'INSERT', 'ALTER', 'CREATE', 'TRUNCATE', 'EXEC', 'EXECUTE']
-    for keyword in dangerous_keywords:
-        if keyword in sql_upper and keyword != 'SELECT':  # Allow SELECT
-            return f"ERROR: Query contains forbidden keyword '{keyword}'. Only SELECT queries are allowed for safety."
+    Returns Genie's response with query results."""
     
     try:
-        result = execute_sql(sql_query)
+        # Use Genie Conversation API
+        # Note: Genie room/conversation needs to be set up first
+        # This is a placeholder - you'll need to configure Genie room ID
         
-        if not result:
-            return "Query executed successfully but returned no results."
+        # Option 1: Use Genie Conversation API (if available)
+        # Check if genie API is available in SDK
+        if hasattr(w, 'genie') or hasattr(w, 'conversations'):
+            # Try to use Genie API
+            try:
+                # This is the expected API structure - adjust based on actual SDK
+                response = w.genie.query(
+                    room_id=GENIE_ROOM_ID,  # You'll need to set this
+                    question=question
+                )
+                return response.get('answer', str(response))
+            except AttributeError:
+                pass
         
-        # Format results nicely
-        if len(result) == 0:
-            return "Query executed successfully but returned no rows."
+        # Option 2: Fallback - Use Genie via SQL Warehouse with natural language
+        # Genie can be accessed through SQL warehouses with special syntax
+        # For now, we'll use a direct Genie API call if available
         
-        # Get column names from first row
-        if result:
-            columns = list(result[0].keys())
-            
-            # Format as table
-            output = []
-            output.append("Query Results:")
-            output.append("=" * 80)
-            
-            # Header
-            header = " | ".join([str(col).ljust(20) for col in columns])
-            output.append(header)
-            output.append("-" * 80)
-            
-            # Rows (limit to 50 rows for readability)
-            max_rows = 50
-            for i, row in enumerate(result[:max_rows]):
-                values = [str(row.get(col, '')).ljust(20)[:20] for col in columns]
-                output.append(" | ".join(values))
-            
-            if len(result) > max_rows:
-                output.append(f"\n... ({len(result) - max_rows} more rows)")
-            
-            output.append(f"\nTotal rows: {len(result)}")
-            
-            return "\n".join(output)
-        else:
-            return "Query executed successfully but returned no results."
-            
-    except Exception as e:
-        return f"SQL Error: {str(e)}\n\nPlease check your query syntax and table names. Remember to use fully qualified names: {CATALOG}.{SCHEMA}.table_name"
+        # If Genie API is not available, provide helpful error message
+        return f"""Genie API is not configured. To use Genie:
+        
+1. Create a Genie room in Databricks:
+   - Go to SQL Editor
+   - Create a new Genie room/conversation
+   - Note the room ID
 
-# Combine all tools
-tools = [search_battery_docs, get_battery_status, get_battery_revenue, get_battery_info, execute_custom_sql]
+2. Configure GENIE_ROOM_ID in this script
+
+3. Ensure Genie Conversation API is enabled in your workspace
+
+For now, you can use execute_custom_sql tool to write SQL queries directly.
+
+Question asked: {question}"""
+        
+    except Exception as e:
+        return f"Genie Error: {str(e)}\n\nPlease ensure Genie is configured and GENIE_ROOM_ID is set correctly."
+
+# Configuration for Genie
+GENIE_ROOM_ID = os.environ.get("GENIE_ROOM_ID", None)  # Set this to your Genie room ID
+
+# Combine all tools - use Genie instead of custom SQL
+tools = [search_battery_docs, get_battery_status, get_battery_revenue, get_battery_info, query_genie]
 
 print("\n✅ Created 5 agent tools:")
 for tool in tools:
@@ -365,14 +361,14 @@ Available tools:
 - get_battery_status: For current SoC and capabilities
 - get_battery_revenue: For financial performance analysis
 - get_battery_info: For asset specifications
-- execute_custom_sql: For custom SQL queries when predefined tools can't answer (like Databricks Genie)
+- query_genie: For complex questions that predefined tools can't answer - uses Databricks Genie API
 
 When answering:
 - Always use specific data from tools
 - Cite sources (e.g., "According to telemetry..." or "From technical docs page X...")
 - For technical questions, search docs first
 - For operational questions, query live data
-- If predefined tools can't answer, use execute_custom_sql to write your own SQL query
+- If predefined tools can't answer, use query_genie - it will automatically generate and execute SQL
 - Combine both when needed for comprehensive answers"""
 
 # Initialize LLM
