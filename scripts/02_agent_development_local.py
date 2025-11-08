@@ -267,8 +267,7 @@ def query_genie(
 ) -> str:
     """Query Databricks Genie to answer questions using natural language.
     
-    Use this tool when predefined tools (get_battery_status, get_battery_revenue, get_battery_info) 
-    cannot answer the question. Genie will automatically:
+    Use this tool for ALL SQL and data queries. Genie will automatically:
     - Understand your question
     - Generate appropriate SQL queries
     - Execute them against the battery trading database
@@ -606,10 +605,10 @@ Question asked: {question}"""
 # Configuration for Genie
 GENIE_ROOM_ID = os.environ.get("GENIE_ROOM_ID", None)  # Set this to your Genie room ID
 
-# Combine all tools - use Genie instead of custom SQL
-tools = [search_battery_docs, get_battery_status, get_battery_revenue, get_battery_info, query_genie]
+# Combine all tools - ONLY Genie for SQL queries, no predefined SQL tools
+tools = [search_battery_docs, query_genie]
 
-print("\n✅ Created 5 agent tools:")
+print("\n✅ Created 2 agent tools:")
 for tool in tools:
     print(f"   - {tool.name}: {tool.description[:80]}...")
 
@@ -629,21 +628,17 @@ Important context:
 - Throughput limits over 7.5 hour windows affect bidding
 
 Available tools:
-- search_battery_docs: For technical/process questions (how, why, explain)
-- get_battery_status: For current SoC and capabilities
-- get_battery_revenue: For financial performance analysis
-- get_battery_info: For asset specifications
-- query_genie: For complex questions that predefined tools can't answer - uses Databricks Genie API
+- search_battery_docs: For technical/process questions (how, why, explain) - searches documentation
+- query_genie: For ALL SQL/data queries - uses Databricks Genie API to generate and execute SQL dynamically
 
-When answering:
-- Always use specific data from tools
-- Cite sources (e.g., "According to telemetry..." or "From technical docs page X...")
-- For technical questions, search docs first
-- For operational questions, query live data
-- If predefined tools can't answer, use query_genie - it will automatically generate and execute SQL
-- **IMPORTANT: When query_genie returns an answer, USE THAT ANSWER DIRECTLY - it contains the actual results from Genie**
+CRITICAL RULES:
+- **ONLY use query_genie for ANY SQL or data queries** - battery status, revenue, telemetry, dispatch data, etc.
+- **DO NOT use any predefined SQL tools** - they are removed
+- **If query_genie fails or returns an error, FAIL - do NOT try to calculate or guess the answer**
+- **When query_genie returns an answer, USE THAT ANSWER DIRECTLY** - it contains the actual results from Genie
 - **If query_genie returns a number or formatted answer, that IS the answer - don't try to calculate it yourself**
-- Combine both when needed for comprehensive answers"""
+- For technical documentation questions, use search_battery_docs
+- For any data queries (SoC, revenue, throughput, comparisons, etc.), use query_genie ONLY"""
 
 # Initialize LLM
 # Only print when running directly (not when imported)
