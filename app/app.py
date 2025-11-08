@@ -19,11 +19,12 @@ import json
 # Cache agent initialization to avoid reloading on every page refresh
 # Use file modification time to bust cache when file changes
 @st.cache_resource
-def load_agent(_file_mtime):
+def load_agent(_file_mtime, _force_reload=False):
     """Load agent lazily - only when needed
     
     Args:
         _file_mtime: File modification time (used for cache busting)
+        _force_reload: Force reload even if cached
     """
     AGENT_AVAILABLE = False
     AGENT_ERROR = None
@@ -38,8 +39,11 @@ def load_agent(_file_mtime):
             # Clear any cached module to force reload
             import sys
             module_name = "agent_module"
-            if module_name in sys.modules:
-                del sys.modules[module_name]
+            # Clear ALL cached modules related to agent
+            modules_to_remove = [k for k in sys.modules.keys() if 'agent' in k.lower() or '02_agent' in k.lower()]
+            for mod in modules_to_remove:
+                if mod in sys.modules:
+                    del sys.modules[mod]
             
             spec = importlib.util.spec_from_file_location(module_name, agent_script_path)
             agent_module = importlib.util.module_from_spec(spec)
@@ -49,7 +53,18 @@ def load_agent(_file_mtime):
             # Get configuration values
             INDEX_NAME = getattr(agent_module, 'INDEX_NAME', None)
             GENIE_ROOM_ID = getattr(agent_module, 'GENIE_ROOM_ID', None) or os.environ.get("GENIE_ROOM_ID", None)
-            AGENT_AVAILABLE = True
+            
+            # Verify tools list - should only have search_battery_docs and query_genie
+            if hasattr(agent_module, 'tools'):
+                tools_list = agent_module.tools
+                tool_names = [t.name for t in tools_list]
+                if 'get_battery_status' in tool_names or 'get_battery_revenue' in tool_names or 'get_battery_info' in tool_names:
+                    AGENT_ERROR = f"ERROR: Old SQL tools still present: {tool_names}. Expected only: ['search_battery_docs', 'query_genie']"
+                    AGENT_AVAILABLE = False
+                else:
+                    AGENT_AVAILABLE = True
+            else:
+                AGENT_AVAILABLE = True
         else:
             AGENT_ERROR = f"Agent script not found at {agent_script_path}"
     except Exception as e:
