@@ -43,9 +43,10 @@ def create_genie_room():
                 space_id = getattr(space, 'space_id', getattr(space, 'id', 'Unknown'))
                 print(f"  - {space_name} (ID: {space_id})")
                 
-                # Check if our target space exists
-                if space_name == "battery-trading-agent":
-                    print(f"\n✅ Found existing space 'battery-trading-agent'!")
+                # Check if our target space exists (case-insensitive, handle variations)
+                target_names = ["battery-trading-agent", "battery trading agent", "Battery Trading Agent"]
+                if space_name.lower().replace("-", " ").strip() in [n.lower().replace("-", " ").strip() for n in target_names]:
+                    print(f"\n✅ Found existing space '{space_name}'!")
                     print(f"   Space ID: {space_id}")
                     return space_id
         else:
