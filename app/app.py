@@ -285,72 +285,48 @@ with st.sidebar:
 # Main chat interface
 st.markdown("### 💬 Chat with Assistant")
 
-# Display chat history
-chat_container = st.container()
-with chat_container:
-    for message in st.session_state.messages:
-        if message["role"] == "user":
-            st.markdown(f"""
-            <div class="user-message">
-                <strong>You:</strong><br>
-                {message["content"]}
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.markdown(f"""
-            <div class="assistant-message">
-                <strong>Assistant:</strong><br>
-                {message["content"]}
-            </div>
-            """, unsafe_allow_html=True)
+# Display chat history using Streamlit's chat components
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-# Chat input
+# Chat input - process immediately
 if AGENT_AVAILABLE:
-    user_input = st.text_input(
-        "Ask a question about battery operations, trading, or technical documentation:",
-        key="user_input",
-        placeholder="e.g., What is RESS2 current SoC?",
-        value=st.session_state.get("user_input", "")
-    )
-    
-    col1, col2 = st.columns([1, 10])
-    with col1:
-        send_button = st.button("Send", type="primary")
-    
-    # Process user input
-    if send_button and user_input:
+    if prompt := st.chat_input("Ask a question about battery operations, trading, or technical documentation..."):
         # Add user message
-        st.session_state.messages.append({"role": "user", "content": user_input})
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
         
-        # Show loading and get response
-        with st.spinner("🤔 Thinking..."):
-            try:
-                # Invoke agent
-                response = agent.invoke({
-                    "messages": [
-                        SystemMessage(content=SYSTEM_PROMPT),
-                        HumanMessage(content=user_input)
-                    ]
-                })
-                
-                # Get assistant response
-                assistant_response = response["messages"][-1].content
-                
-                # Add assistant message
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": assistant_response
-                })
-                
-            except Exception as e:
-                error_msg = f"Sorry, I encountered an error: {str(e)}"
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": error_msg
-                })
-        
-        # Clear input and refresh display
-        st.session_state.user_input = ""
+        # Get agent response
+        with st.chat_message("assistant"):
+            with st.spinner("🤔 Thinking..."):
+                try:
+                    # Invoke agent
+                    response = agent.invoke({
+                        "messages": [
+                            SystemMessage(content=SYSTEM_PROMPT),
+                            HumanMessage(content=prompt)
+                        ]
+                    })
+                    
+                    # Get assistant response
+                    assistant_response = response["messages"][-1].content
+                    st.markdown(assistant_response)
+                    
+                    # Add to session state
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": assistant_response
+                    })
+                    
+                except Exception as e:
+                    error_msg = f"Sorry, I encountered an error: {str(e)}"
+                    st.error(error_msg)
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": error_msg
+                    })
 else:
     st.warning("⚠️ Agent is not available. Please ensure the agent script is properly configured.")
 
