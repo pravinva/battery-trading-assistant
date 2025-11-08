@@ -304,30 +304,21 @@ Question asked: {question}"""
         # Start a conversation in the space with the question as content
         genie = w.genie
         
-        # Start a conversation with content (the question)
-        conversation = genie.start_conversation(
-            space_id=GENIE_ROOM_ID,
-            content=question
-        )
-        conversation_id = conversation.conversation_id
+        # API signature: start_conversation(space_id: str, content: str) -> Wait[GenieMessage]
+        # Use positional arguments as shown in the signature
+        conversation_wait = genie.start_conversation(GENIE_ROOM_ID, question)
         
-        # Get the message from the conversation response
-        # The response should be in the conversation object
-        message = None
-        if hasattr(conversation, 'message'):
-            message = conversation.message
-        elif hasattr(conversation, 'messages') and conversation.messages:
-            message = conversation.messages[-1]
+        # Wait for the conversation to complete and get the message
+        # The Wait object needs to be resolved
+        if hasattr(conversation_wait, 'result'):
+            message = conversation_wait.result()
+        elif hasattr(conversation_wait, 'get'):
+            message = conversation_wait.get()
+        elif hasattr(conversation_wait, 'wait'):
+            message = conversation_wait.wait()
         else:
-            # If message not in conversation, try to get it via create_message_and_wait
-            try:
-                message = genie.create_message_and_wait(
-                    conversation_id=conversation_id,
-                    content=question
-                )
-            except Exception:
-                # Fallback: use the conversation object itself
-                message = conversation
+            # If it's already resolved, use it directly
+            message = conversation_wait
         
         # Try to extract SQL query from Genie response
         sql_query = None
@@ -394,7 +385,10 @@ Question asked: {question}"""
 *Note: Genie dynamically generated and executed SQL queries to answer your question. The SQL query details are available in the Genie conversation.*"""
         
     except Exception as e:
-        return f"Genie Error: {str(e)}\n\nPlease ensure:\n1. Genie space 'battery-trading-agent' exists\n2. GENIE_ROOM_ID is set correctly\n3. You have permissions to use the space\n\nQuestion asked: {question}"
+        # Don't return error message - raise exception so agent doesn't fall back to other tools
+        error_msg = f"Genie API Error: {str(e)}\n\nPlease ensure:\n1. Genie space 'battery-trading-agent' exists\n2. GENIE_ROOM_ID is set correctly\n3. You have permissions to use the space\n4. Genie API is enabled in your workspace\n\nQuestion asked: {question}"
+        # Raise exception instead of returning error message
+        raise Exception(error_msg)
 
 # Configuration for Genie
 GENIE_ROOM_ID = os.environ.get("GENIE_ROOM_ID", None)  # Set this to your Genie room ID
