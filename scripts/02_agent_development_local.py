@@ -63,7 +63,25 @@ def execute_sql(query: str) -> list:
     
     # Convert result to list of dicts
     if result.result and result.result.data_array:
-        columns = [col.name for col in result.result.manifest.schema.columns]
+        # Get column names from result structure
+        columns = []
+        if hasattr(result.result, 'manifest') and result.result.manifest:
+            if hasattr(result.result.manifest, 'schema') and result.result.manifest.schema:
+                if hasattr(result.result.manifest.schema, 'columns'):
+                    columns = [col.name for col in result.result.manifest.schema.columns]
+        
+        # If no columns found, try alternative approach
+        if not columns:
+            # Check if result has column info directly
+            if hasattr(result, 'manifest') and result.manifest:
+                if hasattr(result.manifest, 'schema') and result.manifest.schema:
+                    if hasattr(result.manifest.schema, 'columns'):
+                        columns = [col.name for col in result.manifest.schema.columns]
+        
+        # Last resort: use column indices
+        if not columns and result.result.data_array:
+            columns = [f"col_{i}" for i in range(len(result.result.data_array[0]))]
+        
         rows = []
         for row_data in result.result.data_array:
             row_dict = {col: val for col, val in zip(columns, row_data)}
