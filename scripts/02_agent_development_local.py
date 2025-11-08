@@ -452,9 +452,21 @@ Question asked: {question}"""
                                     break
                             elif content and len(content) > len(question) + 10:
                                 # If no role but content is different and longer, might be answer
-                                # Check if it contains numbers or units (likely an answer)
+                                # Check if it contains numbers/units OR metadata keywords
                                 import re
-                                if re.search(r'\d+', content) or 'MWh' in content or 'MW' in content or '$' in content:
+                                has_numeric = bool(re.search(r'\d+', content) or 'MWh' in content or 'MW' in content or '$' in content)
+                                has_metadata = bool(
+                                    'table' in content.lower() or 
+                                    'column' in content.lower() or
+                                    'schema' in content.lower() or
+                                    'structure' in content.lower() or
+                                    'battery_telemetry' in content or
+                                    'battery_dispatch' in content or
+                                    'battery_assets' in content or
+                                    'SELECT' in content.upper() or
+                                    'FROM' in content.upper()
+                                )
+                                if has_numeric or has_metadata:
                                     print(f"DEBUG: Found answer-like content: {content[:200]}")
                                     genie_response = content
                                     break
@@ -738,13 +750,34 @@ Question asked: {question}"""
         # Include Genie's answer FIRST - this is what the agent should use
         if genie_response and genie_response != question:
             # Check if genie_response contains actual answer (not just question)
-            # Genie's answer should contain the actual numbers/results
-            if len(genie_response) > len(question) + 10:  # Answer should be longer
-                # Check if it contains numbers (likely an actual answer)
-                if re.search(r'\d+', genie_response) or 'MWh' in genie_response or 'MW' in genie_response or '$' in genie_response:
-                    # This is Genie's actual answer - put it first and make it prominent
-                    response_parts.append(f"{genie_response}")
-                    has_valid_answer = True
+            # For data queries: look for numbers/units
+            # For metadata/descriptive queries: look for meaningful text content
+            response_length_check = len(genie_response) > len(question) + 10  # Answer should be longer
+            
+            # Check for numeric/data indicators
+            has_numeric_data = bool(re.search(r'\d+', genie_response) or 
+                                   'MWh' in genie_response or 'MW' in genie_response or 
+                                   '$' in genie_response or '%' in genie_response)
+            
+            # Check for metadata/descriptive content (table names, column names, etc.)
+            has_metadata_content = bool(
+                'table' in genie_response.lower() or 
+                'column' in genie_response.lower() or
+                'schema' in genie_response.lower() or
+                'structure' in genie_response.lower() or
+                'relationship' in genie_response.lower() or
+                'battery_telemetry' in genie_response or
+                'battery_dispatch' in genie_response or
+                'battery_assets' in genie_response or
+                'SELECT' in genie_response.upper() or
+                'FROM' in genie_response.upper()
+            )
+            
+            # Accept if it's longer than question AND (has numeric data OR has metadata content)
+            if response_length_check and (has_numeric_data or has_metadata_content):
+                # This is Genie's actual answer - put it first and make it prominent
+                response_parts.append(f"{genie_response}")
+                has_valid_answer = True
         
         # Check query_data for valid results
         if query_data:
@@ -759,9 +792,39 @@ Question asked: {question}"""
             except Exception:
                 pass
         
-        # If we don't have a valid answer, FAIL explicitly but include debug info
+        # If we don't have a valid answer, check if Genie returned the question (meaning it didn't process)
         if not has_valid_answer and not sql_query:
-            error_msg = f"""Genie Error: Could not extract answer from Genie response.
+            # Check if Genie just echoed the question back (common when it can't process)
+            if genie_response == question or (genie_response and len(genie_response) <= len(question) + 5):
+                error_msg = f"""Genie Error: Genie did not process the question and returned it unchanged.
+
+Question: {question}
+Genie Response: {genie_response if genie_response else 'None'}
+Message ID: {message_id if message_id else 'None'}
+Conversation ID: {conversation_id if conversation_id else 'None'}
+
+Possible reasons:
+1. Question may be too complex or outside Genie's scope
+2. Genie may need more specific instructions in the space configuration
+3. The question may require metadata queries that Genie doesn't support directly
+
+For metadata questions (table structure, schema info), consider:
+- Asking specific data questions instead (e.g., "Show me columns in battery_telemetry" vs "What tables are available")
+- Using the search_battery_docs tool for documentation about database structure
+- Checking the Genie UI directly to see if Genie processed the question
+
+DEBUG INFO:
+{chr(10).join(debug_info)}
+
+Please check:
+1. Genie space exists and is accessible
+2. Question was properly sent to Genie
+3. Genie has completed processing (check Genie UI)
+4. GENIE_ROOM_ID is set correctly: {GENIE_ROOM_ID if GENIE_ROOM_ID else 'NOT SET'}
+
+The agent cannot proceed without Genie's answer."""
+            else:
+                error_msg = f"""Genie Error: Could not extract answer from Genie response.
 
 Question: {question}
 Genie Response: {genie_response if genie_response else 'None'}
