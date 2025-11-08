@@ -429,13 +429,42 @@ Question asked: {question}"""
                     # Use wait_get_message_genie_completed to ensure message is fully processed
                     completed_message = genie.wait_get_message_genie_completed(message_id=message_id)
                     if completed_message:
-                        # Extract from completed message
+                        # Extract from completed message - this should have the full answer
                         if hasattr(completed_message, 'content') and not genie_response:
                             genie_response = completed_message.content
                         elif hasattr(completed_message, 'answer') and not genie_response:
                             genie_response = completed_message.answer
+                        elif hasattr(completed_message, 'text') and not genie_response:
+                            genie_response = completed_message.text
+                        # Check nested message structure
+                        elif hasattr(completed_message, 'message'):
+                            msg_obj = completed_message.message
+                            if hasattr(msg_obj, 'content') and not genie_response:
+                                genie_response = msg_obj.content
+                            elif hasattr(msg_obj, 'text') and not genie_response:
+                                genie_response = msg_obj.text
                 except Exception:
                     pass
+                
+                # Also try listing conversation messages to get the assistant's response
+                if not genie_response or genie_response == question:
+                    try:
+                        conversation_id = getattr(message, 'conversation_id', None) or getattr(message_details, 'conversation_id', None)
+                        if conversation_id:
+                            messages = genie.list_conversation_messages(conversation_id=conversation_id)
+                            if messages and hasattr(messages, 'messages'):
+                                # Get the last message (should be Genie's response)
+                                for msg in reversed(messages.messages):
+                                    # Look for assistant/user messages with content
+                                    if hasattr(msg, 'role') and getattr(msg, 'role', '').lower() in ['assistant', 'genie']:
+                                        if hasattr(msg, 'content') and msg.content and msg.content != question:
+                                            genie_response = msg.content
+                                            break
+                                    elif hasattr(msg, 'content') and msg.content and msg.content != question:
+                                        genie_response = msg.content
+                                        break
+                    except Exception:
+                        pass
                 
                 # Try alternative method: execute_message_query
                 if not query_data:
