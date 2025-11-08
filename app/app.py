@@ -65,6 +65,29 @@ file_mtime = agent_script_path.stat().st_mtime if agent_script_path.exists() els
 # Load agent (cached, but cache invalidates when file changes)
 AGENT_AVAILABLE, agent, SYSTEM_PROMPT, AGENT_ERROR, INDEX_NAME, GENIE_ROOM_ID = load_agent(file_mtime)
 
+# Get Genie room name from ID
+@st.cache_resource
+def get_genie_room_name(_room_id):
+    """Get Genie room name from ID"""
+    if not _room_id:
+        return None
+    try:
+        from databricks.sdk import WorkspaceClient
+        w = WorkspaceClient()
+        if hasattr(w, 'genie'):
+            genie = w.genie
+            spaces_response = genie.list_spaces()
+            spaces = spaces_response.spaces if hasattr(spaces_response, 'spaces') else spaces_response
+            for space in spaces:
+                space_id = getattr(space, 'space_id', getattr(space, 'id', None))
+                if space_id == _room_id:
+                    return getattr(space, 'title', getattr(space, 'name', None))
+    except Exception:
+        pass
+    return None
+
+GENIE_ROOM_NAME = get_genie_room_name(GENIE_ROOM_ID) if GENIE_ROOM_ID else None
+
 # Page config
 st.set_page_config(
     page_title="Energy Australia - Battery Trading Assistant",
@@ -99,13 +122,13 @@ st.markdown("""
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     }
     
-    /* Header - Energy Australia Style */
+    /* Header - Energy Australia Style - Lighter, more pleasant blue */
     .header-container {
-        background: linear-gradient(135deg, var(--ea-primary-blue) 0%, var(--ea-accent-blue) 100%);
+        background: linear-gradient(135deg, #4A90E2 0%, #5BA3F5 100%);
         padding: 2rem 2.5rem;
         border-radius: 0;
         margin: -1rem -1rem 2rem -1rem;
-        box-shadow: 0 2px 8px rgba(0, 102, 204, 0.15);
+        box-shadow: 0 2px 8px rgba(74, 144, 226, 0.2);
         position: relative;
         overflow: hidden;
     }
@@ -138,12 +161,23 @@ st.markdown("""
     }
     
     .header-subtitle {
-        color: rgba(255, 255, 255, 0.9);
+        color: rgba(255, 255, 255, 0.95);
         font-size: 1.1rem;
         margin-top: 0.75rem;
         font-weight: 400;
         position: relative;
         z-index: 1;
+        line-height: 1.6;
+    }
+    
+    .header-subtitle code {
+        background: rgba(255, 255, 255, 0.25) !important;
+        color: #FFFFFF !important;
+        padding: 4px 8px !important;
+        border-radius: 4px !important;
+        font-weight: 500 !important;
+        font-size: 0.95em !important;
+        border: 1px solid rgba(255, 255, 255, 0.3) !important;
     }
     
     /* Chat container - Clean Energy Australia Style */
@@ -316,10 +350,15 @@ with col2:
     subtitle_parts = ["AI-powered insights for battery operations and trading"]
     
     if INDEX_NAME:
-        subtitle_parts.append(f"Vector Index: <code style='background: rgba(255,255,255,0.2); padding: 2px 6px; border-radius: 3px;'>{INDEX_NAME}</code>")
+        # Shorten index name for display
+        index_display = INDEX_NAME.split('.')[-1] if '.' in INDEX_NAME else INDEX_NAME
+        subtitle_parts.append(f"Vector Index: <code>{index_display}</code>")
     
-    if GENIE_ROOM_ID:
-        subtitle_parts.append(f"Genie Room: <code style='background: rgba(255,255,255,0.2); padding: 2px 6px; border-radius: 3px;'>{GENIE_ROOM_ID}</code>")
+    if GENIE_ROOM_NAME:
+        subtitle_parts.append(f"Genie Room: <code>{GENIE_ROOM_NAME}</code>")
+    elif GENIE_ROOM_ID:
+        # Fallback to ID if name not available
+        subtitle_parts.append(f"Genie Room: <code>{GENIE_ROOM_ID[:8]}...</code>")
     
     subtitle_html = " | ".join(subtitle_parts)
     
