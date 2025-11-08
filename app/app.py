@@ -432,7 +432,7 @@ def extract_sources(response_messages):
                         "query": tool_info['args'].get('query', ''),
                         "result": msg.content
                     })
-                elif tool_name in ['get_battery_status', 'get_battery_revenue', 'get_battery_info', 'execute_custom_sql']:
+                elif tool_name in ['get_battery_status', 'get_battery_revenue', 'get_battery_info', 'query_genie']:
                     sources["tools_used"].append("SQL Query")
                     sources["sql_queries"].append({
                         "tool": tool_name,
@@ -447,7 +447,7 @@ def extract_sources(response_messages):
                         "query": "Query from tool",
                         "result": msg.content
                     })
-                elif tool_name in ['get_battery_status', 'get_battery_revenue', 'get_battery_info', 'execute_custom_sql']:
+                elif tool_name in ['get_battery_status', 'get_battery_revenue', 'get_battery_info', 'query_genie']:
                     sources["tools_used"].append("SQL Query")
                     sources["sql_queries"].append({
                         "tool": tool_name,
