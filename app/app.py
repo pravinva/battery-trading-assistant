@@ -17,6 +17,7 @@ from pathlib import Path
 import json
 
 # Cache agent initialization to avoid reloading on every page refresh
+# Use hash of file modification time to bust cache when file changes
 @st.cache_resource
 def load_agent():
     """Load agent lazily - only when needed"""
@@ -30,7 +31,13 @@ def load_agent():
     try:
         agent_script_path = Path(__file__).parent.parent / "scripts" / "02_agent_development_local.py"
         if agent_script_path.exists():
-            spec = importlib.util.spec_from_file_location("agent_module", agent_script_path)
+            # Clear any cached module to force reload
+            import sys
+            module_name = "agent_module"
+            if module_name in sys.modules:
+                del sys.modules[module_name]
+            
+            spec = importlib.util.spec_from_file_location(module_name, agent_script_path)
             agent_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(agent_module)
             agent = agent_module.agent
@@ -47,8 +54,54 @@ def load_agent():
     
     return AGENT_AVAILABLE, agent, SYSTEM_PROMPT, AGENT_ERROR, INDEX_NAME, GENIE_ROOM_ID
 
-# Load agent (cached)
-AGENT_AVAILABLE, agent, SYSTEM_PROMPT, AGENT_ERROR, INDEX_NAME, GENIE_ROOM_ID = load_agent()
+# Cache agent initialization to avoid reloading on every page refresh
+# Use file modification time to bust cache when file changes
+@st.cache_resource
+def load_agent(_file_mtime):
+    """Load agent lazily - only when needed
+    
+    Args:
+        _file_mtime: File modification time (used for cache busting)
+    """
+    AGENT_AVAILABLE = False
+    AGENT_ERROR = None
+    agent = None
+    SYSTEM_PROMPT = None
+    INDEX_NAME = None
+    GENIE_ROOM_ID = None
+    
+    try:
+        agent_script_path = Path(__file__).parent.parent / "scripts" / "02_agent_development_local.py"
+        if agent_script_path.exists():
+            # Clear any cached module to force reload
+            import sys
+            module_name = "agent_module"
+            if module_name in sys.modules:
+                del sys.modules[module_name]
+            
+            spec = importlib.util.spec_from_file_location(module_name, agent_script_path)
+            agent_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(agent_module)
+            agent = agent_module.agent
+            SYSTEM_PROMPT = agent_module.SYSTEM_PROMPT
+            # Get configuration values
+            INDEX_NAME = getattr(agent_module, 'INDEX_NAME', None)
+            GENIE_ROOM_ID = getattr(agent_module, 'GENIE_ROOM_ID', None) or os.environ.get("GENIE_ROOM_ID", None)
+            AGENT_AVAILABLE = True
+        else:
+            AGENT_ERROR = f"Agent script not found at {agent_script_path}"
+    except Exception as e:
+        AGENT_AVAILABLE = False
+        AGENT_ERROR = str(e)
+    
+    return AGENT_AVAILABLE, agent, SYSTEM_PROMPT, AGENT_ERROR, INDEX_NAME, GENIE_ROOM_ID
+
+# Get file modification time for cache busting
+agent_script_path = Path(__file__).parent.parent / "scripts" / "02_agent_development_local.py"
+file_mtime = agent_script_path.stat().st_mtime if agent_script_path.exists() else 0
+
+# Load agent (cached, but cache invalidates when file changes)
+AGENT_AVAILABLE, agent, SYSTEM_PROMPT, AGENT_ERROR, INDEX_NAME, GENIE_ROOM_ID = load_agent(file_mtime)
 
 # Page config
 st.set_page_config(
