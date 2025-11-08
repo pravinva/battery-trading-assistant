@@ -405,17 +405,17 @@ print(response["messages"][-1].content)
         print(f"⚠️  MLflow logging skipped: {e}")
         run_id = None
 
-print("\n" + "=" * 80)
-print("AGENT DEVELOPMENT COMPLETE")
-print("=" * 80)
-if run_id:
-    print(f"\n✅ Agent logged to MLflow: runs:/{run_id}/agent")
-else:
-    print(f"\n✅ Agent created successfully (MLflow logging skipped)")
-print(f"\n📊 Agent Summary:")
-print(f"   ✅ 4 tools created and tested")
-print(f"   ✅ LLM: {LLM_ENDPOINT}")
-print(f"   ✅ Vector Search: {INDEX_NAME}")
-print(f"   ✅ All test queries passed")
-print(f"\n➡️  Next Step: Use agent directly or proceed to evaluation/deployment")
+    print("\n" + "=" * 80)
+    print("AGENT DEVELOPMENT COMPLETE")
+    print("=" * 80)
+    if run_id:
+        print(f"\n✅ Agent logged to MLflow: runs:/{run_id}/agent")
+    else:
+        print(f"\n✅ Agent created successfully (MLflow logging skipped)")
+    print(f"\n📊 Agent Summary:")
+    print(f"   ✅ 4 tools created and tested")
+    print(f"   ✅ LLM: {LLM_ENDPOINT}")
+    print(f"   ✅ Vector Search: {INDEX_NAME}")
+    print(f"   ✅ All test queries passed")
+    print(f"\n➡️  Next Step: Use agent directly or proceed to evaluation/deployment")
 
