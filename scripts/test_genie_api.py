@@ -95,7 +95,7 @@ while time.time() - start_time < max_poll_time:
         elapsed = int(time.time() - start_time)
         print(f"  Poll #{poll_count} [{elapsed}s] Status: {message_status}")
         
-        if message_status in ['COMPLETED', 'FAILED', 'CANCELLED']:
+        if message_status in ['COMPLETED', 'FAILED', 'CANCELLED'] or str(message_status) in ['MessageStatus.COMPLETED', 'MessageStatus.FAILED', 'MessageStatus.CANCELLED']:
             print(f"  ✓ Message reached conclusive state: {message_status}")
             break
         
@@ -183,18 +183,23 @@ if attachments:
         # Query is a GenieQueryAttachment object, extract the actual query string
         if hasattr(attachment, 'query'):
             query_obj = attachment.query
+            # GenieQueryAttachment has a .query attribute containing the SQL string
             if hasattr(query_obj, 'query'):
                 query = query_obj.query  # Extract the SQL string
-            elif isinstance(query_obj, dict):
-                query = query_obj.get('query')
             elif isinstance(query_obj, str):
                 query = query_obj
+            else:
+                query = None
         elif isinstance(attachment, dict):
             query_obj = attachment.get('query')
-            if isinstance(query_obj, dict):
+            if isinstance(query_obj, dict) and 'query' in query_obj:
                 query = query_obj.get('query')
             elif isinstance(query_obj, str):
                 query = query_obj
+            else:
+                query = None
+        else:
+            query = None
         
         if hasattr(attachment, 'attachment_id'):
             attachment_id = attachment.attachment_id

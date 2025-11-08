@@ -371,7 +371,11 @@ Question asked: {question}"""
                     print(f"DEBUG: Poll #{poll_count} [{elapsed}s] Status: {message_status}")
                     
                     # Check if message is in a conclusive state
-                    if message_status in ['COMPLETED', 'FAILED', 'CANCELLED']:
+                    # Handle both string and MessageStatus enum
+                    status_str = str(message_status)
+                    if (message_status in ['COMPLETED', 'FAILED', 'CANCELLED'] or 
+                        status_str in ['MessageStatus.COMPLETED', 'MessageStatus.FAILED', 'MessageStatus.CANCELLED'] or
+                        'COMPLETED' in status_str or 'FAILED' in status_str or 'CANCELLED' in status_str):
                         message = message_details  # Use the completed message
                         print(f"DEBUG: Message reached conclusive state: {message_status}")
                         break
