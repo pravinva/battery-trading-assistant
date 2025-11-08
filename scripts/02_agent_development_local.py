@@ -326,21 +326,7 @@ Question asked: {question}"""
             # If Wait handling fails, try to use it directly
             message = conversation_wait
         
-        # Wait for Genie to complete processing - use wait_get_message_genie_completed
-        import time
-        if message_id:
-            try:
-                # Wait for Genie to complete processing (up to 30 seconds)
-                completed_message = genie.wait_get_message_genie_completed(message_id=message_id, timeout=30)
-                if completed_message:
-                    message = completed_message  # Use the completed message
-            except Exception as e:
-                # If wait fails, fall back to sleep
-                time.sleep(10)  # Give Genie more time to process
-        else:
-            time.sleep(10)  # If no message_id, wait longer
-        
-        # Extract message ID to fetch detailed results
+        # Extract message ID to fetch detailed results FIRST
         message_id = None
         if hasattr(message, 'message_id'):
             message_id = message.message_id
@@ -355,6 +341,25 @@ Question asked: {question}"""
             conversation_id = message.conversation_id
         elif isinstance(message, dict):
             conversation_id = message.get('conversation_id')
+        
+        # Wait for Genie to complete processing - use wait_get_message_genie_completed
+        import time
+        if message_id:
+            try:
+                # Wait for Genie to complete processing (up to 30 seconds)
+                completed_message = genie.wait_get_message_genie_completed(message_id=message_id, timeout=30)
+                if completed_message:
+                    message = completed_message  # Use the completed message
+                    # Re-extract message_id from completed message
+                    if hasattr(completed_message, 'message_id'):
+                        message_id = completed_message.message_id
+                    elif hasattr(completed_message, 'id'):
+                        message_id = completed_message.id
+            except Exception as e:
+                # If wait fails, fall back to sleep
+                time.sleep(10)  # Give Genie more time to process
+        else:
+            time.sleep(10)  # If no message_id, wait longer
         
         # Try to get the full message details including SQL and results
         sql_query = None
