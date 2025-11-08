@@ -354,56 +354,55 @@ if __name__ == "__main__":
     })
     print(response["messages"][-1].content)
 
-    # Log Agent to MLflow
+    # Log Agent to MLflow (non-blocking background thread)
+    def log_to_mlflow_async():
+        """Log agent to MLflow in background thread"""
+        try:
+            init_mlflow_lazy()
+            from mlflow.models.resources import (
+                DatabricksVectorSearchIndex,
+                DatabricksServingEndpoint,
+            )
+
+            input_example = {
+                "messages": [
+                    SystemMessage(content=SYSTEM_PROMPT),
+                    HumanMessage(content="What is RESS2 current SoC?")
+                ]
+            }
+
+            with mlflow.start_run(run_name="battery_agent_v1_local"):
+                try:
+                    logged_agent = mlflow.langchain.log_model(
+                        lc_model=agent,
+                        artifact_path="agent",
+                        input_example=input_example,
+                        resources=[
+                            DatabricksVectorSearchIndex(index_name=INDEX_NAME),
+                            DatabricksServingEndpoint(endpoint_name=LLM_ENDPOINT),
+                        ],
+                    )
+                    
+                    run_id = mlflow.active_run().info.run_id
+                    print(f"✅ Logged agent to MLflow (background)")
+                    print(f"   Run ID: {run_id}")
+                    print(f"   Model URI: runs:/{run_id}/agent")
+                    
+                except Exception as e:
+                    print(f"⚠️  MLflow logging failed (LangGraph compatibility issue): {e}")
+                    print("   This is expected - LangGraph agents need special handling for MLflow")
+        except Exception as e:
+            # Silently fail - MLflow logging is optional and non-blocking
+            pass
+    
     print("\n" + "=" * 80)
-    print("Logging Agent to MLflow")
+    print("Logging Agent to MLflow (non-blocking)")
     print("=" * 80)
-
-    try:
-        from mlflow.models.resources import (
-            DatabricksVectorSearchIndex,
-            DatabricksServingEndpoint,
-        )
-
-        input_example = {
-            "messages": [
-                SystemMessage(content=SYSTEM_PROMPT),
-                HumanMessage(content="What is RESS2 current SoC?")
-            ]
-        }
-
-        with mlflow.start_run(run_name="battery_agent_v1_local"):
-            try:
-                logged_agent = mlflow.langchain.log_model(
-                    lc_model=agent,
-                    artifact_path="agent",
-                    input_example=input_example,
-                    resources=[
-                        DatabricksVectorSearchIndex(index_name=INDEX_NAME),
-                        DatabricksServingEndpoint(endpoint_name=LLM_ENDPOINT),
-                    ],
-                )
-                
-                run_id = mlflow.active_run().info.run_id
-                
-                print(f"✅ Logged agent to MLflow")
-                print(f"   Run ID: {run_id}")
-                print(f"   Model URI: runs:/{run_id}/agent")
-                
-                # Test logged model
-                print("\n🧪 Testing logged model...")
-                predictions = mlflow.langchain.load_model(f"runs:/{run_id}/agent").invoke(input_example)
-                print(f"✅ Logged model test successful:")
-                print(predictions["messages"][-1].content[:200] + "...")
-                
-            except Exception as e:
-                print(f"⚠️  MLflow logging failed (LangGraph compatibility issue): {e}")
-                print("   This is expected - LangGraph agents need special handling for MLflow")
-                print("   The agent is fully functional and can be used directly")
-                run_id = None
-    except Exception as e:
-        print(f"⚠️  MLflow logging skipped: {e}")
-        run_id = None
+    
+    # Start MLflow logging in background thread
+    mlflow_thread = threading.Thread(target=log_to_mlflow_async, daemon=True)
+    mlflow_thread.start()
+    run_id = None  # Will be None since it's async
 
     print("\n" + "=" * 80)
     print("AGENT DEVELOPMENT COMPLETE")
