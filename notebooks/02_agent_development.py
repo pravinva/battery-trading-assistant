@@ -30,7 +30,7 @@ CATALOG = "ea_trading"
 SCHEMA = "battery_trading"
 ENDPOINT_NAME = "one-env-shared-endpoint-10"
 INDEX_NAME = f"{CATALOG}.{SCHEMA}.battery_docs_index"
-LLM_ENDPOINT = "databricks-meta-llama-3-1-70b-instruct"
+LLM_ENDPOINT = "databricks-claude-sonnet-4-5"
 
 mlflow.set_registry_uri("databricks-uc")
 mlflow.set_experiment(f"/Users/{spark.sql('SELECT current_user()').collect()[0][0]}/battery_agent_dev")
