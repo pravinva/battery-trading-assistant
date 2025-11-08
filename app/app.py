@@ -240,8 +240,29 @@ with st.sidebar:
     for query in quick_queries:
         if st.button(f"💬 {query[:40]}...", key=f"quick_{hash(query)}"):
             if AGENT_AVAILABLE:
+                # Add user message
                 st.session_state.messages.append({"role": "user", "content": query})
-                st.rerun()
+                
+                # Get agent response
+                with st.spinner("🤔 Thinking..."):
+                    try:
+                        response = agent.invoke({
+                            "messages": [
+                                SystemMessage(content=SYSTEM_PROMPT),
+                                HumanMessage(content=query)
+                            ]
+                        })
+                        
+                        assistant_response = response["messages"][-1].content
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": assistant_response
+                        })
+                    except Exception as e:
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": f"Sorry, I encountered an error: {str(e)}"
+                        })
             else:
                 st.error("Agent not available")
     
@@ -260,34 +281,36 @@ with st.sidebar:
     
     if st.button("🗑️ Clear Chat"):
         st.session_state.messages = []
-        st.rerun()
 
 # Main chat interface
 st.markdown("### 💬 Chat with Assistant")
 
 # Display chat history
-for message in st.session_state.messages:
-    if message["role"] == "user":
-        st.markdown(f"""
-        <div class="user-message">
-            <strong>You:</strong><br>
-            {message["content"]}
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown(f"""
-        <div class="assistant-message">
-            <strong>Assistant:</strong><br>
-            {message["content"]}
-        </div>
-        """, unsafe_allow_html=True)
+chat_container = st.container()
+with chat_container:
+    for message in st.session_state.messages:
+        if message["role"] == "user":
+            st.markdown(f"""
+            <div class="user-message">
+                <strong>You:</strong><br>
+                {message["content"]}
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div class="assistant-message">
+                <strong>Assistant:</strong><br>
+                {message["content"]}
+            </div>
+            """, unsafe_allow_html=True)
 
 # Chat input
 if AGENT_AVAILABLE:
     user_input = st.text_input(
         "Ask a question about battery operations, trading, or technical documentation:",
         key="user_input",
-        placeholder="e.g., What is RESS2 current SoC?"
+        placeholder="e.g., What is RESS2 current SoC?",
+        value=st.session_state.get("user_input", "")
     )
     
     col1, col2 = st.columns([1, 10])
@@ -299,7 +322,7 @@ if AGENT_AVAILABLE:
         # Add user message
         st.session_state.messages.append({"role": "user", "content": user_input})
         
-        # Show loading
+        # Show loading and get response
         with st.spinner("🤔 Thinking..."):
             try:
                 # Invoke agent
@@ -326,7 +349,8 @@ if AGENT_AVAILABLE:
                     "content": error_msg
                 })
         
-        st.rerun()
+        # Clear input and refresh display
+        st.session_state.user_input = ""
 else:
     st.warning("⚠️ Agent is not available. Please ensure the agent script is properly configured.")
 
