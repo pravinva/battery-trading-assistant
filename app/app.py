@@ -7,11 +7,27 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from langchain_core.messages import HumanMessage, SystemMessage
+import importlib.util
+from pathlib import Path
 
 # Try to import agent - handle if not available
+# Note: Can't use normal import because module name starts with number
+AGENT_AVAILABLE = False
+AGENT_ERROR = None
+agent = None
+SYSTEM_PROMPT = None
+
 try:
-    from scripts.agent_development_local import agent, SYSTEM_PROMPT
-    AGENT_AVAILABLE = True
+    agent_script_path = Path(__file__).parent.parent / "scripts" / "02_agent_development_local.py"
+    if agent_script_path.exists():
+        spec = importlib.util.spec_from_file_location("agent_module", agent_script_path)
+        agent_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(agent_module)
+        agent = agent_module.agent
+        SYSTEM_PROMPT = agent_module.SYSTEM_PROMPT
+        AGENT_AVAILABLE = True
+    else:
+        AGENT_ERROR = f"Agent script not found at {agent_script_path}"
 except Exception as e:
     AGENT_AVAILABLE = False
     AGENT_ERROR = str(e)

@@ -6,10 +6,7 @@ Run this script locally to build and test the agent
 
 import mlflow
 from databricks.sdk import WorkspaceClient
-try:
-    from databricks_langchain import ChatDatabricks
-except ImportError:
-    from langchain_community.chat_models import ChatDatabricks
+from databricks_langchain import ChatDatabricks
 from databricks.vector_search.client import VectorSearchClient
 try:
     from langchain.agents import create_react_agent
