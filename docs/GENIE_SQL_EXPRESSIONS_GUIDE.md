@@ -54,6 +54,18 @@ If you get errors, try fully qualified names: `ea_trading.battery_trading.table_
 - **Synonyms** (optional): `count, number of records, interval count`
 - **Instructions** (optional): `Number of trading intervals`
 
+### Measure 8: Maximum Discharge Capability (Theoretical)
+- **Name**: `Maximum Discharge Capability`
+- **SQL Expression**: `MAX(battery_assets.nameplate_capacity_mw)`
+- **Synonyms** (optional): `max discharge capacity, theoretical discharge capability, nameplate capacity, design capacity`
+- **Instructions** (optional): `Theoretical maximum discharge capability from battery design specifications. Use this for questions about "highest discharge capability" or "maximum capacity" without "current" or "operational" qualifier.`
+
+### Measure 9: Current Discharge Capability (Operational)
+- **Name**: `Current Discharge Capability`
+- **SQL Expression**: `MAX(battery_telemetry.capability_discharge_mw)`
+- **Synonyms** (optional): `current discharge capacity, operational discharge capability, real-time discharge capability`
+- **Instructions** (optional): `Current operational discharge capability from telemetry. Use this only when question specifically asks for "current" or "operational" discharge capability.`
+
 ---
 
 ## 📐 DIMENSIONS (Click "Add" → Select "Dimension")

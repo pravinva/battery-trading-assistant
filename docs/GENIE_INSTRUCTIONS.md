@@ -25,6 +25,14 @@ Available tables:
 - battery_assets: Asset specifications, capacity, location, partner details
 - battery_documents: Document metadata (technical documentation is in Vector Search)
 
+**CRITICAL: Discharge Capability Clarification**
+
+When asked about "discharge capability" or "discharge capacity":
+- **Theoretical/Maximum Discharge Capability**: Use `battery_assets.nameplate_capacity_mw` - this is the design specification, the maximum possible discharge rate
+- **Current/Operational Discharge Capability**: Use `battery_telemetry.capability_discharge_mw` - this is the current operational capability, which can vary based on SoC, temperature, and other factors
+
+**Default behavior**: If the question asks "which battery has the highest discharge capability" without specifying "current" or "operational", use `battery_assets.nameplate_capacity_mw` (theoretical maximum) as this represents the battery's design capacity.
+
 **CRITICAL: Energy Throughput Calculations**
 
 When calculating energy throughput:
@@ -135,13 +143,29 @@ FROM ea_trading.battery_trading.battery_telemetry
 WHERE timestamp >= current_timestamp() - INTERVAL 12 HOURS
 ```
 
-**Query 5: Energy throughput from dispatch table**
-- Question: "Calculate total energy throughput from dispatch data"
+**Query 6: Maximum discharge capability (theoretical)**
+- Question: "Which battery has the highest discharge capability?"
 - SQL:
 ```sql
-SELECT ROUND(SUM(ABS(dispatch_mw) * 5.0 / 60.0), 2) AS total_throughput_mwh
-FROM ea_trading.battery_trading.battery_dispatch
-WHERE dispatch_interval >= current_timestamp() - INTERVAL 12 HOURS
+SELECT battery_id,
+       site_name,
+       nameplate_capacity_mw AS max_discharge_capability_mw
+FROM ea_trading.battery_trading.battery_assets
+WHERE nameplate_capacity_mw IS NOT NULL
+ORDER BY nameplate_capacity_mw DESC
+LIMIT 1
+```
+
+**Query 7: Current discharge capability (operational)**
+- Question: "Which battery has the highest current discharge capability?"
+- SQL:
+```sql
+SELECT battery_id, 
+       capability_discharge_mw
+FROM ea_trading.battery_trading.battery_telemetry
+WHERE capability_discharge_mw IS NOT NULL
+ORDER BY capability_discharge_mw DESC
+LIMIT 1
 ```
 
 ## How to Add These Instructions
