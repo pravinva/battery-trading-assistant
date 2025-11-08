@@ -327,6 +327,10 @@ Question asked: {question}"""
             # If Wait handling fails, try to use it directly
             message = conversation_wait
         
+        # Wait a moment for Genie to complete processing
+        import time
+        time.sleep(1)  # Give Genie time to process and execute query
+        
         # Extract message ID to fetch detailed results
         message_id = None
         if hasattr(message, 'message_id'):
@@ -417,8 +421,24 @@ Question asked: {question}"""
                             query_data = query_data['data']
                             
                 except Exception as e:
-                    # Query result extraction failed, but we can still use message content
-                    # Try alternative method: execute_message_query
+                    # Query result extraction failed, try alternative method
+                    pass
+                
+                # Try alternative: wait for message to complete, then get results
+                try:
+                    # Use wait_get_message_genie_completed to ensure message is fully processed
+                    completed_message = genie.wait_get_message_genie_completed(message_id=message_id)
+                    if completed_message:
+                        # Extract from completed message
+                        if hasattr(completed_message, 'content') and not genie_response:
+                            genie_response = completed_message.content
+                        elif hasattr(completed_message, 'answer') and not genie_response:
+                            genie_response = completed_message.answer
+                except Exception:
+                    pass
+                
+                # Try alternative method: execute_message_query
+                if not query_data:
                     try:
                         exec_result = genie.execute_message_query(message_id=message_id)
                         if exec_result:
