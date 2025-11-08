@@ -181,6 +181,211 @@ Show me the revenue performance for all batteries in the last 24 hours
 3. **Unity Catalog Governance**: All tools governed, lineage tracked
 4. **Agent Evaluation**: Built-in quality metrics (retrieval, groundedness, relevance)
 5. **Streamlit UI**: User-friendly chat interface
+6. **Databricks Genie Integration**: Dynamic SQL generation via Genie Conversational API
+
+## Genie Conversational API Integration
+
+The agent uses the **Databricks Genie Conversational API** to dynamically generate and execute SQL queries. This section explains how the API response decoding works.
+
+### Architecture Overview
+
+```
+User Question → Agent → query_genie Tool → Genie API → SQL Generation → Query Execution → Results
+```
+
+### API Flow
+
+#### Step 1: Start Conversation
+
+```python
+conversation_wait = genie.start_conversation(GENIE_ROOM_ID, question)
+```
+
+- Sends natural language question to Genie space
+- Returns a `Wait[GenieMessage]` object
+- Extracts `message_id` and `conversation_id` from response
+
+#### Step 2: Poll for Status
+
+Following [Genie API best practices](https://docs.databricks.com/aws/en/genie/conversation-api#-best-practices-for-using-the-genie-api):
+
+```python
+# Poll every 2-10 seconds with exponential backoff
+# Max polling time: 2 minutes (for UI responsiveness)
+while status not in ['COMPLETED', 'FAILED', 'CANCELLED']:
+    message_details = genie.get_message(
+        space_id=GENIE_ROOM_ID, 
+        conversation_id=conversation_id, 
+        message_id=message_id
+    )
+    status = message_details.status
+    # Check status and wait with exponential backoff
+```
+
+**Key Points:**
+- Polls every 2 seconds initially, up to 10 seconds max interval
+- Exponential backoff: `poll_interval = min(poll_interval * 1.5, 10)`
+- Breaks immediately when status is `COMPLETED`
+- Maximum polling time: 2 minutes (reduced from 10 minutes for UI responsiveness)
+
+#### Step 3: Extract Response from Attachments
+
+When status is `COMPLETED`, Genie's response is in the `attachments` array:
+
+```python
+attachments = message_details.attachments  # List of GenieAttachment objects
+
+for attachment in attachments:
+    # Extract SQL query (GenieQueryAttachment object)
+    query_obj = attachment.query  # GenieQueryAttachment
+    sql_query = query_obj.query   # Actual SQL string
+    
+    # Extract statement_id for query results
+    statement_id = query_obj.statement_id  # UUID for fetching results
+    
+    # Extract text response (if available)
+    text_response = attachment.text  # Usually None for SQL queries
+```
+
+**Response Structure:**
+```
+GenieMessage
+├── status: MessageStatus.COMPLETED
+├── attachments: [
+│     GenieAttachment(
+│       attachment_id: "...",
+│       query: GenieQueryAttachment(
+│         query: "SELECT ...",           # SQL string
+│         statement_id: "uuid",          # For fetching results
+│         description: "...",
+│         query_result_metadata: {...}
+│       ),
+│       text: None                       # Usually None for SQL
+│     )
+│   ]
+└── query_result: Result(...)            # Metadata only
+```
+
+#### Step 4: Fetch Query Results
+
+Genie doesn't return query results directly. Instead, use the `statement_id` from the attachment:
+
+```python
+# Use statement execution API to get actual results
+from databricks.sdk.service.sql import StatementState
+
+result = w.statement_execution.get_statement(statement_id)
+
+if result.status.state == StatementState.SUCCEEDED:
+    query_data = result.result.data_array  # List of rows
+    # Each row is a list: ['battery_id', 'value']
+```
+
+**Why `statement_id`?**
+- Genie executes SQL asynchronously
+- `statement_id` is the execution handle
+- Use Databricks Statement Execution API to fetch results
+- Results are in `data_array` format: `[['DPNTBESS', '183.95'], ['GANNBG1', '334.41'], ...]`
+
+### Response Decoding Flow
+
+```
+1. Start Conversation
+   ↓
+2. Poll for Status (COMPLETED/FAILED/CANCELLED)
+   ↓
+3. Extract Attachments Array
+   ↓
+4. For each attachment:
+   ├── Extract SQL: attachment.query.query
+   ├── Extract statement_id: attachment.query.statement_id
+   └── Extract text: attachment.text (usually None)
+   ↓
+5. Fetch Results via Statement Execution API
+   ↓
+6. Format Response:
+   ├── Genie's answer (if text available)
+   ├── Generated SQL query
+   └── Query results (from statement_id)
+```
+
+### Key Implementation Details
+
+#### Status Handling
+
+```python
+# Handle MessageStatus enum (not just strings)
+status_str = str(message_status)
+if (message_status in ['COMPLETED', 'FAILED', 'CANCELLED'] or 
+    'COMPLETED' in status_str):
+    # Break polling loop
+```
+
+#### Query Extraction
+
+```python
+# GenieQueryAttachment is an object, not a string
+query_obj = attachment.query  # GenieQueryAttachment object
+sql_query = query_obj.query    # Extract SQL string
+statement_id = query_obj.statement_id  # Extract statement ID
+```
+
+#### Error Handling
+
+- **Timeout**: If polling exceeds 2 minutes, use last known status
+- **Missing Data**: Fail explicitly if no valid answer extracted
+- **API Errors**: Raise exceptions (don't return error strings) to prevent fallback
+
+### Testing the API
+
+Use the test script to inspect Genie responses:
+
+```bash
+export GENIE_ROOM_ID="your-space-id"
+python3 scripts/test_genie_api.py
+```
+
+This script:
+- Starts a conversation
+- Polls for status
+- Extracts attachments
+- Fetches query results
+- Prints full response structure
+
+### Best Practices
+
+Following [Databricks Genie API best practices](https://docs.databricks.com/aws/en/genie/conversation-api#-best-practices-for-using-the-genie-api):
+
+1. **Polling**: 1-5 second intervals with exponential backoff (max 10 seconds)
+2. **Timeout**: 2 minutes max (reduced for UI responsiveness)
+3. **Status Check**: Break immediately on `COMPLETED`
+4. **Error Handling**: Fail explicitly, don't silently fall back
+5. **New Conversations**: Start fresh conversation for each session
+
+### Troubleshooting
+
+**Issue**: Genie returns question instead of answer
+- **Cause**: Polling too early, status not COMPLETED yet
+- **Fix**: Ensure status is `COMPLETED` before extracting response
+
+**Issue**: Can't extract SQL query
+- **Cause**: `attachment.query` is `GenieQueryAttachment` object, not string
+- **Fix**: Extract `attachment.query.query` (nested `.query` attribute)
+
+**Issue**: No query results
+- **Cause**: Using `attachment_id` instead of `statement_id`
+- **Fix**: Use `attachment.query.statement_id` with Statement Execution API
+
+**Issue**: Different SQL in Genie UI vs Streamlit
+- **Cause**: Genie may interpret questions differently based on context
+- **Fix**: Add clear instructions and SQL examples to Genie space (see `docs/GENIE_INSTRUCTIONS.md`)
+
+### Related Documentation
+
+- **Genie Setup**: `docs/GENIE_INSTRUCTIONS.md` - How to configure Genie space
+- **SQL Expressions**: `docs/GENIE_SQL_EXPRESSIONS_GUIDE.md` - Measures, dimensions, filters
+- **Query Consistency**: `docs/GENIE_QUERY_CONSISTENCY.md` - Handling different SQL interpretations
+- **Test Questions**: `docs/GENIE_TEST_QUESTIONS.md` - Recommended test queries
 
 ## Troubleshooting
 
