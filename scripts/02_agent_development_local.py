@@ -497,10 +497,25 @@ Question asked: {question}"""
                                 genie_response = candidate_text
                         
                         # Extract SQL query from attachment
+                        # Query is a GenieQueryAttachment object, extract the actual query string
                         if hasattr(attachment, 'query'):
-                            candidate_query = attachment.query
+                            query_obj = attachment.query
+                            if hasattr(query_obj, 'query'):
+                                candidate_query = query_obj.query  # Extract the SQL string
+                            elif isinstance(query_obj, dict):
+                                candidate_query = query_obj.get('query')
+                            elif isinstance(query_obj, str):
+                                candidate_query = query_obj
+                            else:
+                                candidate_query = None
                         elif isinstance(attachment, dict):
-                            candidate_query = attachment.get('query')
+                            query_obj = attachment.get('query')
+                            if isinstance(query_obj, dict):
+                                candidate_query = query_obj.get('query')
+                            elif isinstance(query_obj, str):
+                                candidate_query = query_obj
+                            else:
+                                candidate_query = None
                         else:
                             candidate_query = None
                         
