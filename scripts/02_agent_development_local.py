@@ -353,14 +353,24 @@ Question asked: {question}"""
                     genie_response = message_details.answer
                 elif hasattr(message_details, 'text'):
                     genie_response = message_details.text
+                elif hasattr(message_details, 'message'):
+                    # Sometimes answer is nested in message object
+                    msg_obj = message_details.message
+                    if hasattr(msg_obj, 'content'):
+                        genie_response = msg_obj.content
+                    elif hasattr(msg_obj, 'text'):
+                        genie_response = msg_obj.text
                 elif isinstance(message_details, dict):
-                    genie_response = message_details.get('content') or message_details.get('answer') or message_details.get('text')
+                    genie_response = (message_details.get('content') or 
+                                     message_details.get('answer') or 
+                                     message_details.get('text') or
+                                     message_details.get('message', {}).get('content'))
                 
                 # Try to get query result which contains SQL and data
                 try:
                     query_result = genie.get_message_query_result(message_id=message_id)
                     if query_result:
-                        # Extract SQL query
+                        # Extract SQL query - try multiple attributes
                         if hasattr(query_result, 'sql_query'):
                             sql_query = query_result.sql_query
                         elif hasattr(query_result, 'query'):
@@ -369,26 +379,55 @@ Question asked: {question}"""
                             sql_query = query_result.sql
                         elif hasattr(query_result, 'query_text'):
                             sql_query = query_result.query_text
+                        elif hasattr(query_result, 'query_string'):
+                            sql_query = query_result.query_string
                         elif isinstance(query_result, dict):
                             sql_query = (query_result.get('sql_query') or 
                                         query_result.get('query') or 
                                         query_result.get('sql') or
-                                        query_result.get('query_text'))
+                                        query_result.get('query_text') or
+                                        query_result.get('query_string'))
                         
-                        # Extract query data/results
+                        # Extract query data/results - try multiple structures
                         if hasattr(query_result, 'data'):
                             query_data = query_result.data
                         elif hasattr(query_result, 'result'):
                             query_data = query_result.result
                         elif hasattr(query_result, 'rows'):
                             query_data = query_result.rows
+                        elif hasattr(query_result, 'result_set'):
+                            query_data = query_result.result_set
+                        elif hasattr(query_result, 'data_array'):
+                            query_data = query_result.data_array
                         elif isinstance(query_result, dict):
                             query_data = (query_result.get('data') or 
                                          query_result.get('result') or 
-                                         query_result.get('rows'))
+                                         query_result.get('rows') or
+                                         query_result.get('result_set') or
+                                         query_result.get('data_array'))
+                        
+                        # If query_data is a complex object, try to extract rows/values
+                        if query_data and hasattr(query_data, 'rows'):
+                            query_data = query_data.rows
+                        elif query_data and hasattr(query_data, 'data'):
+                            query_data = query_data.data
+                        elif query_data and isinstance(query_data, dict) and 'rows' in query_data:
+                            query_data = query_data['rows']
+                        elif query_data and isinstance(query_data, dict) and 'data' in query_data:
+                            query_data = query_data['data']
+                            
                 except Exception as e:
                     # Query result extraction failed, but we can still use message content
-                    pass
+                    # Try alternative method: execute_message_query
+                    try:
+                        exec_result = genie.execute_message_query(message_id=message_id)
+                        if exec_result:
+                            if hasattr(exec_result, 'data'):
+                                query_data = exec_result.data
+                            elif hasattr(exec_result, 'result'):
+                                query_data = exec_result.result
+                    except Exception:
+                        pass
                     
             except Exception as e:
                 # If get_message fails, try alternative approaches
@@ -413,21 +452,57 @@ Question asked: {question}"""
         if sql_query:
             response_parts.append(f"🤖 **Databricks Genie Generated SQL:**\n\n```sql\n{sql_query}\n```")
         
+        # Format query data nicely - handle various formats
         if query_data:
-            # Format query data nicely
-            if isinstance(query_data, list):
-                if query_data:
-                    response_parts.append(f"\n**Query Results:**\n```\n{str(query_data)}\n```")
+            try:
+                # Handle list of rows
+                if isinstance(query_data, list):
+                    if len(query_data) > 0:
+                        # Try to format as table
+                        if isinstance(query_data[0], (list, tuple)):
+                            # Array of arrays - format as table
+                            formatted_data = "\n".join([str(row) for row in query_data])
+                            response_parts.append(f"\n**Query Results:**\n```\n{formatted_data}\n```")
+                        elif isinstance(query_data[0], dict):
+                            # Array of dicts - format nicely
+                            formatted_rows = []
+                            for row in query_data:
+                                formatted_rows.append(str(row))
+                            response_parts.append(f"\n**Query Results:**\n```\n" + "\n".join(formatted_rows) + "\n```")
+                        else:
+                            response_parts.append(f"\n**Query Results:**\n```\n{str(query_data)}\n```")
+                    else:
+                        response_parts.append("\n**Query Results:** No data returned (NULL or empty result)")
+                # Handle dict format
+                elif isinstance(query_data, dict):
+                    # Check if it's a result set with rows
+                    if 'rows' in query_data:
+                        rows = query_data['rows']
+                        if rows:
+                            formatted_rows = [str(row) for row in rows]
+                            response_parts.append(f"\n**Query Results:**\n```\n" + "\n".join(formatted_rows) + "\n```")
+                        else:
+                            response_parts.append("\n**Query Results:** No data returned (NULL or empty result)")
+                    elif 'data' in query_data:
+                        response_parts.append(f"\n**Query Results:**\n```json\n{str(query_data['data'])}\n```")
+                    else:
+                        response_parts.append(f"\n**Query Results:**\n```json\n{str(query_data)}\n```")
+                # Handle other formats
                 else:
-                    response_parts.append("\n**Query Results:** No data returned (NULL or empty result)")
-            elif isinstance(query_data, dict):
-                response_parts.append(f"\n**Query Results:**\n```json\n{str(query_data)}\n```")
-            else:
-                response_parts.append(f"\n**Query Results:**\n{str(query_data)}")
+                    data_str = str(query_data)
+                    if data_str and data_str != 'None':
+                        response_parts.append(f"\n**Query Results:**\n```\n{data_str}\n```")
+                    else:
+                        response_parts.append("\n**Query Results:** NULL or empty result")
+            except Exception as e:
+                # If formatting fails, just include raw data
+                response_parts.append(f"\n**Query Results (raw):**\n{str(query_data)}")
         
+        # Include Genie's answer if available and different from question
         if genie_response and genie_response != question:
-            # Only include genie_response if it's different from the question
-            response_parts.append(f"\n**Genie Answer:**\n{genie_response}")
+            # Check if genie_response contains actual answer (not just question)
+            if len(genie_response) > len(question) + 20:  # Answer should be longer
+                response_parts.append(f"\n**Genie Answer:**\n{genie_response}")
         
         if not response_parts:
             # If we got nothing useful, return the question (shouldn't happen)
