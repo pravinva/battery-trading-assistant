@@ -99,12 +99,12 @@ st.set_page_config(
 # Custom CSS for Energy Australia branding
 st.markdown("""
 <style>
-    /* Energy Australia Brand Colors - Matching Website */
+    /* Energy Australia Brand Colors - Green Theme */
     :root {
-        --ea-primary-blue: #0066CC;
-        --ea-dark-blue: #003366;
-        --ea-light-blue: #E6F2FF;
-        --ea-accent-blue: #0084D4;
+        --ea-primary-green: #00A651;
+        --ea-dark-green: #007A3D;
+        --ea-light-green: #E6F5ED;
+        --ea-accent-green: #00C85C;
         --ea-text-dark: #1A1A1A;
         --ea-text-gray: #666666;
         --ea-text-light-gray: #999999;
@@ -122,13 +122,13 @@ st.markdown("""
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     }
     
-    /* Header - Energy Australia Style - Lighter, more pleasant blue */
+    /* Header - Energy Australia Style - Green Theme */
     .header-container {
-        background: linear-gradient(135deg, #4A90E2 0%, #5BA3F5 100%);
+        background: linear-gradient(135deg, #00A651 0%, #00C85C 100%);
         padding: 2rem 2.5rem;
         border-radius: 0;
         margin: -1rem -1rem 2rem -1rem;
-        box-shadow: 0 2px 8px rgba(74, 144, 226, 0.2);
+        box-shadow: 0 2px 8px rgba(0, 166, 81, 0.2);
         position: relative;
         overflow: hidden;
     }
@@ -190,19 +190,19 @@ st.markdown("""
         border: 1px solid var(--ea-border);
     }
     
-    /* User message - Energy Australia Blue */
+    /* User message - Energy Australia Green */
     .user-message {
-        background-color: var(--ea-primary-blue);
+        background-color: var(--ea-primary-green);
         color: var(--ea-white);
         padding: 1rem 1.25rem;
         border-radius: 12px 12px 4px 12px;
         margin-bottom: 1rem;
         margin-left: 20%;
-        box-shadow: 0 2px 4px rgba(0, 102, 204, 0.2);
+        box-shadow: 0 2px 4px rgba(0, 166, 81, 0.2);
         font-weight: 400;
     }
     
-    /* Assistant message - Clean White with Blue Accent */
+    /* Assistant message - Clean White with Green Accent */
     .assistant-message {
         background-color: var(--ea-white);
         color: var(--ea-text-dark);
@@ -210,7 +210,7 @@ st.markdown("""
         border-radius: 12px 12px 12px 4px;
         margin-bottom: 1rem;
         margin-right: 20%;
-        border-left: 3px solid var(--ea-primary-blue);
+        border-left: 3px solid var(--ea-primary-green);
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
         border: 1px solid var(--ea-border);
     }
@@ -225,14 +225,14 @@ st.markdown("""
     }
     
     .stTextInput > div > div > input:focus {
-        border-color: var(--ea-primary-blue);
-        box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+        border-color: var(--ea-primary-green);
+        box-shadow: 0 0 0 3px rgba(0, 166, 81, 0.1);
         outline: none;
     }
     
-    /* Button styling - Energy Australia Primary Blue */
+    /* Button styling - Energy Australia Primary Green */
     .stButton > button {
-        background-color: var(--ea-primary-blue);
+        background-color: var(--ea-primary-green);
         color: var(--ea-white);
         border-radius: 8px;
         border: none;
@@ -241,12 +241,12 @@ st.markdown("""
         font-size: 0.95rem;
         transition: all 0.2s ease;
         width: 100%;
-        box-shadow: 0 2px 4px rgba(0, 102, 204, 0.2);
+        box-shadow: 0 2px 4px rgba(0, 166, 81, 0.2);
     }
     
     .stButton > button:hover {
-        background-color: var(--ea-accent-blue);
-        box-shadow: 0 4px 8px rgba(0, 102, 204, 0.3);
+        background-color: var(--ea-accent-green);
+        box-shadow: 0 4px 8px rgba(0, 166, 81, 0.3);
         transform: translateY(-1px);
     }
     
@@ -261,11 +261,11 @@ st.markdown("""
         height: 10px;
         border-radius: 50%;
         margin-right: 8px;
-        box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.2);
+        box-shadow: 0 0 0 2px rgba(0, 166, 81, 0.2);
     }
     
     .status-online {
-        background-color: var(--ea-primary-blue);
+        background-color: var(--ea-primary-green);
     }
     
     .status-offline {
@@ -307,7 +307,7 @@ st.markdown("""
     /* Expander styling */
     .streamlit-expanderHeader {
         font-weight: 600;
-        color: var(--ea-primary-blue);
+        color: var(--ea-primary-green);
     }
     
     /* Caption styling for sources */
