@@ -1,7 +1,12 @@
 import streamlit as st
 import sys
 import os
+import warnings
 from pathlib import Path
+
+# Suppress warnings
+warnings.filterwarnings("ignore")
+os.environ["PYTHONWARNINGS"] = "ignore"
 
 # Add parent directory to path to import agent
 sys.path.append(str(Path(__file__).parent.parent))

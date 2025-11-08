@@ -4,6 +4,14 @@ Battery Trading Agent Development - Local Execution
 Run this script locally to build and test the agent
 """
 
+import warnings
+import os
+
+# Suppress warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+os.environ["PYTHONWARNINGS"] = "ignore"
+
 import mlflow
 from databricks.sdk import WorkspaceClient
 try:
@@ -271,7 +279,9 @@ When answering:
 
 # Initialize LLM
 print("\n🔧 Initializing LLM...")
-llm = ChatDatabricks(endpoint=LLM_ENDPOINT, temperature=0.1)
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore")
+    llm = ChatDatabricks(endpoint=LLM_ENDPOINT, temperature=0.1)
 
 # Create LangGraph agent
 print("🔧 Creating LangGraph ReAct agent...")
