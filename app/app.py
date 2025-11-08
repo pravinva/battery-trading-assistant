@@ -56,134 +56,221 @@ st.set_page_config(
 # Custom CSS for Energy Australia branding
 st.markdown("""
 <style>
-    /* Energy Australia Brand Colors */
+    /* Energy Australia Brand Colors - Matching Website */
     :root {
-        --ea-blue: #003366;
-        --ea-light-blue: #0066CC;
-        --ea-green: #00A651;
-        --ea-dark-green: #00843D;
-        --ea-gray: #666666;
-        --ea-light-gray: #F5F5F5;
+        --ea-primary-blue: #0066CC;
+        --ea-dark-blue: #003366;
+        --ea-light-blue: #E6F2FF;
+        --ea-accent-blue: #0084D4;
+        --ea-text-dark: #1A1A1A;
+        --ea-text-gray: #666666;
+        --ea-text-light-gray: #999999;
+        --ea-bg-light: #F8F9FA;
+        --ea-border: #E0E0E0;
+        --ea-white: #FFFFFF;
     }
+    
+    /* Import Energy Australia font style */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
     
     /* Main container */
     .main {
-        background-color: #FFFFFF;
+        background-color: var(--ea-bg-light);
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     }
     
-    /* Header */
+    /* Header - Energy Australia Style */
     .header-container {
-        background: linear-gradient(135deg, #003366 0%, #0066CC 100%);
-        padding: 1.5rem 2rem;
-        border-radius: 8px;
-        margin-bottom: 2rem;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        background: linear-gradient(135deg, var(--ea-primary-blue) 0%, var(--ea-accent-blue) 100%);
+        padding: 2rem 2.5rem;
+        border-radius: 0;
+        margin: -1rem -1rem 2rem -1rem;
+        box-shadow: 0 2px 8px rgba(0, 102, 204, 0.15);
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .header-container::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: repeating-linear-gradient(
+            45deg,
+            transparent,
+            transparent 10px,
+            rgba(255, 255, 255, 0.03) 10px,
+            rgba(255, 255, 255, 0.03) 20px
+        );
+        pointer-events: none;
     }
     
     .header-title {
-        color: #FFFFFF;
-        font-size: 2rem;
-        font-weight: 600;
+        color: var(--ea-white);
+        font-size: 2.25rem;
+        font-weight: 700;
         margin: 0;
+        letter-spacing: -0.02em;
+        position: relative;
+        z-index: 1;
     }
     
     .header-subtitle {
-        color: #E0E0E0;
-        font-size: 1rem;
-        margin-top: 0.5rem;
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 1.1rem;
+        margin-top: 0.75rem;
+        font-weight: 400;
+        position: relative;
+        z-index: 1;
     }
     
-    /* Chat container */
+    /* Chat container - Clean Energy Australia Style */
     .chat-container {
-        background-color: #FFFFFF;
-        border-radius: 8px;
+        background-color: var(--ea-white);
+        border-radius: 12px;
         padding: 1.5rem;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
         margin-bottom: 1rem;
+        border: 1px solid var(--ea-border);
     }
     
-    /* User message */
+    /* User message - Energy Australia Blue */
     .user-message {
-        background-color: #0066CC;
-        color: #FFFFFF;
-        padding: 1rem;
-        border-radius: 8px;
+        background-color: var(--ea-primary-blue);
+        color: var(--ea-white);
+        padding: 1rem 1.25rem;
+        border-radius: 12px 12px 4px 12px;
         margin-bottom: 1rem;
         margin-left: 20%;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        box-shadow: 0 2px 4px rgba(0, 102, 204, 0.2);
+        font-weight: 400;
     }
     
-    /* Assistant message */
+    /* Assistant message - Clean White with Blue Accent */
     .assistant-message {
-        background-color: #F5F5F5;
-        color: #333333;
-        padding: 1rem;
-        border-radius: 8px;
+        background-color: var(--ea-white);
+        color: var(--ea-text-dark);
+        padding: 1rem 1.25rem;
+        border-radius: 12px 12px 12px 4px;
         margin-bottom: 1rem;
         margin-right: 20%;
-        border-left: 4px solid #00A651;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        border-left: 3px solid var(--ea-primary-blue);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+        border: 1px solid var(--ea-border);
     }
     
-    /* Input area */
+    /* Input area - Energy Australia Style */
     .stTextInput > div > div > input {
         border-radius: 8px;
-        border: 2px solid #E0E0E0;
-        padding: 0.75rem;
+        border: 1.5px solid var(--ea-border);
+        padding: 0.875rem 1rem;
+        font-size: 0.95rem;
+        transition: all 0.2s ease;
     }
     
     .stTextInput > div > div > input:focus {
-        border-color: #0066CC;
+        border-color: var(--ea-primary-blue);
         box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+        outline: none;
     }
     
-    /* Button styling */
+    /* Button styling - Energy Australia Primary Blue */
     .stButton > button {
-        background-color: #00A651;
-        color: #FFFFFF;
+        background-color: var(--ea-primary-blue);
+        color: var(--ea-white);
         border-radius: 8px;
         border: none;
-        padding: 0.75rem 2rem;
+        padding: 0.75rem 1.5rem;
         font-weight: 600;
-        transition: background-color 0.3s;
+        font-size: 0.95rem;
+        transition: all 0.2s ease;
         width: 100%;
+        box-shadow: 0 2px 4px rgba(0, 102, 204, 0.2);
     }
     
     .stButton > button:hover {
-        background-color: #00843D;
+        background-color: var(--ea-accent-blue);
+        box-shadow: 0 4px 8px rgba(0, 102, 204, 0.3);
+        transform: translateY(-1px);
     }
     
-    /* Status indicator */
+    .stButton > button:active {
+        transform: translateY(0);
+    }
+    
+    /* Status indicator - Energy Australia Style */
     .status-indicator {
         display: inline-block;
         width: 10px;
         height: 10px;
         border-radius: 50%;
         margin-right: 8px;
+        box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.2);
     }
     
     .status-online {
-        background-color: #00A651;
+        background-color: var(--ea-primary-blue);
     }
     
     .status-offline {
-        background-color: #CCCCCC;
+        background-color: var(--ea-text-light-gray);
     }
     
-    /* Footer */
+    /* Footer - Energy Australia Style */
     .footer {
         text-align: center;
-        padding: 1rem;
-        color: #666666;
+        padding: 1.5rem;
+        color: var(--ea-text-gray);
         font-size: 0.875rem;
-        margin-top: 2rem;
-        border-top: 1px solid #E0E0E0;
+        margin-top: 3rem;
+        border-top: 1px solid var(--ea-border);
+        background-color: var(--ea-white);
     }
     
-    /* Markdown styling */
+    /* Markdown styling - Clean Typography */
     .stMarkdown {
-        line-height: 1.6;
+        line-height: 1.7;
+        color: var(--ea-text-dark);
     }
+    
+    .stMarkdown strong {
+        color: var(--ea-text-dark);
+        font-weight: 600;
+    }
+    
+    /* Sidebar styling */
+    .css-1d391kg {
+        background-color: var(--ea-white);
+    }
+    
+    /* Chat message bubbles */
+    [data-testid="stChatMessage"] {
+        font-family: 'Inter', sans-serif;
+    }
+    
+    /* Expander styling */
+    .streamlit-expanderHeader {
+        font-weight: 600;
+        color: var(--ea-primary-blue);
+    }
+    
+    /* Caption styling for sources */
+    .stCaption {
+        color: var(--ea-text-gray);
+        font-size: 0.875rem;
+    }
+    
+    /* Overall page styling */
+    .stApp {
+        background-color: var(--ea-bg-light);
+    }
+    
+    /* Hide Streamlit menu and footer */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -209,6 +296,15 @@ with col2:
     <div class="header-container">
         <h1 class="header-title">Battery Trading Assistant</h1>
         <p class="header-subtitle">AI-powered insights for battery operations and trading</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Add Energy Australia tagline
+    st.markdown("""
+    <div style="margin-top: -1rem; margin-bottom: 1.5rem; padding-left: 0.5rem;">
+        <p style="color: var(--ea-text-gray); font-size: 0.9rem; margin: 0; font-style: italic;">
+            We're on it
+        </p>
     </div>
     """, unsafe_allow_html=True)
 
