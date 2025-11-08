@@ -487,6 +487,24 @@ Question asked: {question}"""
                 print(f"DEBUG: get_message returned: {type(message_details)}")
                 print(f"DEBUG: message_details attributes: {dir(message_details) if hasattr(message_details, '__dict__') else 'N/A'}")
                 
+                # Write full message_details to debug log
+                try:
+                    import json
+                    debug_log_path = "/tmp/genie_debug.log"
+                    with open(debug_log_path, "a") as f:
+                        f.write(f"\n{'='*80}\n")
+                        f.write(f"Question: {question}\n")
+                        f.write(f"Message ID: {message_id}\n")
+                        f.write(f"Conversation ID: {conversation_id}\n")
+                        f.write(f"Message Details Type: {type(message_details)}\n")
+                        if hasattr(message_details, '__dict__'):
+                            f.write(f"Message Details __dict__:\n{json.dumps({k: str(v)[:500] for k, v in message_details.__dict__.items()}, indent=2)}\n")
+                        elif hasattr(message_details, 'as_dict'):
+                            f.write(f"Message Details (as_dict):\n{json.dumps(message_details.as_dict(), indent=2, default=str)}\n")
+                        f.write(f"{'='*80}\n")
+                except Exception as e:
+                    print(f"DEBUG: Error writing to debug log: {e}")
+                
                 # Extract attachments array (contains Genie's response when COMPLETED)
                 attachments = None
                 if hasattr(message_details, 'attachments'):
