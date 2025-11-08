@@ -82,10 +82,15 @@ if __name__ == "__main__":
     room_id = create_genie_room()
     
     if room_id:
-        print(f"\n✅ Success! Room ID: {room_id}")
+        print(f"\n✅ Success! Found Genie space!")
+        print(f"   Space ID: {room_id}")
         print(f"\n📝 Set this environment variable:")
         print(f"   export GENIE_ROOM_ID=\"{room_id}\"")
+        print(f"\n   Or add to your shell profile (~/.zshrc or ~/.bashrc):")
+        print(f"   echo 'export GENIE_ROOM_ID=\"{room_id}\"' >> ~/.zshrc")
+        print(f"\n   Then restart your terminal or run:")
+        print(f"   source ~/.zshrc")
     else:
-        print("\n⚠️  Could not create room automatically")
-        print("   Please create it manually and set GENIE_ROOM_ID")
+        print("\n⚠️  Could not find 'battery-trading-agent' space")
+        print("   Please create it manually and run this script again")
 
