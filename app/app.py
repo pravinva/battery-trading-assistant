@@ -480,9 +480,16 @@ for idx, message in enumerate(st.session_state.messages):
                 if sources["sql_queries"]:
                     with st.expander("💾 SQL Query Results", expanded=False):
                         for sql_idx, sql_result in enumerate(sources["sql_queries"], 1):
-                            st.markdown(f"**Tool:** `{sql_result['tool']}`")
-                            st.markdown(f"**Arguments:** `{json.dumps(sql_result['args'], indent=2)}`")
-                            st.text_area("Result:", sql_result['result'], height=150, key=f"hist_sql_{idx}_{sql_idx}", label_visibility="collapsed")
+                            tool_name = sql_result['tool']
+                            if tool_name == 'execute_custom_sql':
+                                st.markdown(f"**Tool:** `{tool_name}` (Custom SQL - Genie-like)")
+                                if 'sql_query' in sql_result.get('args', {}):
+                                    st.code(sql_result['args']['sql_query'], language='sql')
+                            else:
+                                st.markdown(f"**Tool:** `{tool_name}`")
+                                if sql_result.get('args'):
+                                    st.markdown(f"**Arguments:** `{json.dumps(sql_result['args'], indent=2)}`")
+                            st.text_area("Result:", sql_result['result'], height=200, key=f"hist_sql_{idx}_{sql_idx}", label_visibility="collapsed")
 
 # Process pending query from sidebar (non-blocking)
 if "pending_query" in st.session_state and st.session_state.pending_query:
