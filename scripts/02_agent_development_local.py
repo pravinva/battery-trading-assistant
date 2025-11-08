@@ -426,49 +426,79 @@ Question asked: {question}"""
             try:
                 # Get the message details - this should contain the answer
                 message_details = genie.get_message(message_id=message_id)
+                print(f"DEBUG: get_message returned: {type(message_details)}")
+                print(f"DEBUG: message_details attributes: {dir(message_details) if hasattr(message_details, '__dict__') else 'N/A'}")
                 
                 # Extract answer/content from message details (if not already found)
                 if not genie_response:
                     if hasattr(message_details, 'content'):
-                        genie_response = message_details.content
+                        candidate = message_details.content
+                        print(f"DEBUG: Found content in message_details: {candidate[:200] if candidate else None}")
+                        if candidate and candidate != question:
+                            genie_response = candidate
                     elif hasattr(message_details, 'answer'):
-                        genie_response = message_details.answer
+                        candidate = message_details.answer
+                        print(f"DEBUG: Found answer in message_details: {candidate[:200] if candidate else None}")
+                        if candidate and candidate != question:
+                            genie_response = candidate
                     elif hasattr(message_details, 'text'):
-                        genie_response = message_details.text
+                        candidate = message_details.text
+                        print(f"DEBUG: Found text in message_details: {candidate[:200] if candidate else None}")
+                        if candidate and candidate != question:
+                            genie_response = candidate
                     elif hasattr(message_details, 'message'):
                         # Sometimes answer is nested in message object
                         msg_obj = message_details.message
+                        print(f"DEBUG: Found nested message object: {type(msg_obj)}")
                         if hasattr(msg_obj, 'content'):
-                            genie_response = msg_obj.content
+                            candidate = msg_obj.content
+                            print(f"DEBUG: Found content in nested message: {candidate[:200] if candidate else None}")
+                            if candidate and candidate != question:
+                                genie_response = candidate
                         elif hasattr(msg_obj, 'text'):
-                            genie_response = msg_obj.text
+                            candidate = msg_obj.text
+                            print(f"DEBUG: Found text in nested message: {candidate[:200] if candidate else None}")
+                            if candidate and candidate != question:
+                                genie_response = candidate
                     elif isinstance(message_details, dict):
-                        genie_response = (message_details.get('content') or 
-                                         message_details.get('answer') or 
-                                         message_details.get('text') or
-                                         message_details.get('message', {}).get('content'))
+                        candidate = (message_details.get('content') or 
+                                    message_details.get('answer') or 
+                                    message_details.get('text') or
+                                    message_details.get('message', {}).get('content'))
+                        print(f"DEBUG: Found in dict: {candidate[:200] if candidate else None}")
+                        if candidate and candidate != question:
+                            genie_response = candidate
                 
                 # Try to get query result which contains SQL and data
                 try:
                     query_result = genie.get_message_query_result(message_id=message_id)
+                    print(f"DEBUG: get_message_query_result returned: {type(query_result)}")
                     if query_result:
+                        print(f"DEBUG: query_result attributes: {dir(query_result) if hasattr(query_result, '__dict__') else 'N/A'}")
+                        
                         # Extract SQL query - try multiple attributes
                         if hasattr(query_result, 'sql_query'):
                             sql_query = query_result.sql_query
+                            print(f"DEBUG: Found sql_query: {sql_query[:200] if sql_query else None}")
                         elif hasattr(query_result, 'query'):
                             sql_query = query_result.query
+                            print(f"DEBUG: Found query: {sql_query[:200] if sql_query else None}")
                         elif hasattr(query_result, 'sql'):
                             sql_query = query_result.sql
+                            print(f"DEBUG: Found sql: {sql_query[:200] if sql_query else None}")
                         elif hasattr(query_result, 'query_text'):
                             sql_query = query_result.query_text
+                            print(f"DEBUG: Found query_text: {sql_query[:200] if sql_query else None}")
                         elif hasattr(query_result, 'query_string'):
                             sql_query = query_result.query_string
+                            print(f"DEBUG: Found query_string: {sql_query[:200] if sql_query else None}")
                         elif isinstance(query_result, dict):
                             sql_query = (query_result.get('sql_query') or 
                                         query_result.get('query') or 
                                         query_result.get('sql') or
                                         query_result.get('query_text') or
                                         query_result.get('query_string'))
+                            print(f"DEBUG: Found in dict: {sql_query[:200] if sql_query else None}")
                         
                         # Extract query data/results - try multiple structures
                         if hasattr(query_result, 'data'):
