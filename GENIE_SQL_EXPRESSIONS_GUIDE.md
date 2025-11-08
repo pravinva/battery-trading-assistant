@@ -83,34 +83,43 @@ If you get errors, try fully qualified names: `ea_trading.battery_trading.table_
 
 ## 🔍 FILTERS (Click "Add" → Select "Filter")
 
+**What are Filters?**
+Filters are SQL expressions that evaluate to a boolean condition (TRUE/FALSE), typically used in WHERE clauses. They filter rows based on conditions.
+
 ### Filter 1: Recent Telemetry
 - **Name**: `Recent Telemetry (Last 10 minutes)`
 - **SQL Expression**: `battery_telemetry.reading_age_minutes <= 10`
+  - *This is a boolean condition that returns TRUE for rows where reading_age_minutes is 10 or less*
 - **Instructions**: `Filter for telemetry readings from the last 10 minutes`
 
 ### Filter 2: High SoC
 - **Name**: `High SoC (>80%)`
 - **SQL Expression**: `battery_telemetry.soc_percent > 80`
+  - *Boolean condition: TRUE when SoC is greater than 80%*
 - **Instructions**: `Batteries with state of charge above 80%`
 
 ### Filter 3: Low SoC
 - **Name**: `Low SoC (<20%)`
 - **SQL Expression**: `battery_telemetry.soc_percent < 20`
+  - *Boolean condition: TRUE when SoC is less than 20%*
 - **Instructions**: `Batteries with state of charge below 20%`
 
 ### Filter 4: Positive Revenue
 - **Name**: `Positive Revenue`
 - **SQL Expression**: `battery_dispatch.revenue_dollar > 0`
+  - *Boolean condition: TRUE when revenue is positive (profitable)*
 - **Instructions**: `Filter for profitable trading intervals`
 
 ### Filter 5: Last 24 Hours
 - **Name**: `Last 24 Hours`
 - **SQL Expression**: `battery_dispatch.dispatch_interval >= current_timestamp() - INTERVAL 24 HOURS`
+  - *Boolean condition: TRUE for rows from the last 24 hours*
 - **Instructions**: `Filter for dispatch data from the last 24 hours`
 
 ### Filter 6: Last Hour
 - **Name**: `Last Hour`
 - **SQL Expression**: `battery_dispatch.dispatch_interval >= current_timestamp() - INTERVAL 1 HOUR`
+  - *Boolean condition: TRUE for rows from the last hour*
 - **Instructions**: `Filter for dispatch data from the last hour`
 
 ---
