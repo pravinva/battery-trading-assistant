@@ -286,19 +286,45 @@ def extract_sources(response_messages):
     
     for msg in response_messages:
         # Check for tool calls (AIMessage with tool_calls)
-        if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
-            for tool_call in msg.tool_calls:
-                tool_call_id = tool_call.get('id') or tool_call.get('name')
-                if tool_call_id:
-                    tool_calls_map[tool_call_id] = {
-                        'name': tool_call.get('name', ''),
-                        'args': tool_call.get('args', {})
-                    }
+        if isinstance(msg, AIMessage):
+            # Try different ways to access tool_calls
+            tool_calls = None
+            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                tool_calls = msg.tool_calls
+            elif hasattr(msg, 'tool_calls') and isinstance(msg.tool_calls, list):
+                tool_calls = msg.tool_calls
+            
+            if tool_calls:
+                for tool_call in tool_calls:
+                    # Handle both dict and object tool_calls
+                    if isinstance(tool_call, dict):
+                        tool_call_id = tool_call.get('id') or tool_call.get('name')
+                        tool_name = tool_call.get('name', '')
+                        tool_args = tool_call.get('args', {})
+                    else:
+                        tool_call_id = getattr(tool_call, 'id', None) or getattr(tool_call, 'name', None)
+                        tool_name = getattr(tool_call, 'name', '')
+                        tool_args = getattr(tool_call, 'args', {})
+                    
+                    if tool_call_id:
+                        tool_calls_map[tool_call_id] = {
+                            'name': tool_name,
+                            'args': tool_args if isinstance(tool_args, dict) else {}
+                        }
         
         # Check for tool results (ToolMessage)
         if isinstance(msg, ToolMessage):
-            # ToolMessage has tool_call_id attribute
-            tool_call_id = getattr(msg, 'tool_call_id', None) or getattr(msg, 'name', None)
+            # Try multiple ways to get tool_call_id
+            tool_call_id = (
+                getattr(msg, 'tool_call_id', None) or 
+                getattr(msg, 'name', None) or
+                (hasattr(msg, 'id') and msg.id) or
+                None
+            )
+            
+            # Get tool name from message
+            tool_name = getattr(msg, 'name', None)
+            
             if tool_call_id and tool_call_id in tool_calls_map:
                 tool_info = tool_calls_map[tool_call_id]
                 tool_name = tool_info['name']
@@ -317,13 +343,12 @@ def extract_sources(response_messages):
                         "args": tool_info['args'],
                         "result": msg.content
                     })
-            # Also try to match by tool name if ID matching fails
-            elif hasattr(msg, 'name'):
-                tool_name = msg.name
+            # Fallback: try to match by tool name
+            elif tool_name:
                 if tool_name == 'search_battery_docs':
                     sources["tools_used"].append("Vector Search")
                     sources["vector_search"].append({
-                        "query": "Unknown query",
+                        "query": "Query from tool",
                         "result": msg.content
                     })
                 elif tool_name in ['get_battery_status', 'get_battery_revenue', 'get_battery_info']:
