@@ -342,24 +342,50 @@ Question asked: {question}"""
         elif isinstance(message, dict):
             conversation_id = message.get('conversation_id')
         
-        # Wait for Genie to complete processing - use wait_get_message_genie_completed
+        # Poll for message status following Genie API best practices
+        # Poll every 1-5 seconds with exponential backoff, max 10 minutes
         import time
-        if message_id:
-            try:
-                # Wait for Genie to complete processing (up to 30 seconds)
-                completed_message = genie.wait_get_message_genie_completed(message_id=message_id, timeout=30)
-                if completed_message:
-                    message = completed_message  # Use the completed message
-                    # Re-extract message_id from completed message
-                    if hasattr(completed_message, 'message_id'):
-                        message_id = completed_message.message_id
-                    elif hasattr(completed_message, 'id'):
-                        message_id = completed_message.id
-            except Exception as e:
-                # If wait fails, fall back to sleep
-                time.sleep(10)  # Give Genie more time to process
+        max_poll_time = 600  # 10 minutes max
+        poll_interval = 2  # Start with 2 seconds
+        max_poll_interval = 60  # Max 1 minute between polls
+        start_time = time.time()
+        
+        if message_id and GENIE_ROOM_ID:
+            message_status = None
+            while time.time() - start_time < max_poll_time:
+                try:
+                    # Get message status
+                    message_details = genie.get_message(space_id=GENIE_ROOM_ID, message_id=message_id)
+                    
+                    # Extract status
+                    if hasattr(message_details, 'status'):
+                        message_status = message_details.status
+                    elif isinstance(message_details, dict):
+                        message_status = message_details.get('status')
+                    
+                    print(f"DEBUG: Message status: {message_status}")
+                    
+                    # Check if message is in a conclusive state
+                    if message_status in ['COMPLETED', 'FAILED', 'CANCELLED']:
+                        message = message_details  # Use the completed message
+                        print(f"DEBUG: Message reached conclusive state: {message_status}")
+                        break
+                    
+                    # Wait before next poll with exponential backoff
+                    time.sleep(min(poll_interval, max_poll_interval))
+                    poll_interval = min(poll_interval * 1.5, max_poll_interval)  # Exponential backoff
+                    
+                except Exception as e:
+                    print(f"DEBUG: Error polling message status: {e}")
+                    # Continue polling on error
+                    time.sleep(min(poll_interval, max_poll_interval))
+                    poll_interval = min(poll_interval * 1.5, max_poll_interval)
+            
+            if message_status not in ['COMPLETED', 'FAILED', 'CANCELLED']:
+                print(f"DEBUG: Polling timeout after {max_poll_time} seconds, status: {message_status}")
         else:
-            time.sleep(10)  # If no message_id, wait longer
+            # If no message_id, wait a bit
+            time.sleep(5)
         
         # Try to get the full message details including SQL and results
         sql_query = None
@@ -423,12 +449,81 @@ Question asked: {question}"""
                 pass
         
         # Then try to get message details and query results
-        if message_id:
+        # Following Genie API docs: when status is COMPLETED, response is in attachments array
+        if message_id and GENIE_ROOM_ID:
             try:
                 # Get the message details - this should contain the answer
-                message_details = genie.get_message(message_id=message_id)
+                message_details = genie.get_message(space_id=GENIE_ROOM_ID, message_id=message_id)
                 print(f"DEBUG: get_message returned: {type(message_details)}")
                 print(f"DEBUG: message_details attributes: {dir(message_details) if hasattr(message_details, '__dict__') else 'N/A'}")
+                
+                # Extract attachments array (contains Genie's response when COMPLETED)
+                attachments = None
+                if hasattr(message_details, 'attachments'):
+                    attachments = message_details.attachments
+                elif isinstance(message_details, dict):
+                    attachments = message_details.get('attachments')
+                
+                print(f"DEBUG: Attachments: {attachments}")
+                
+                # Extract response from attachments (per Genie API docs)
+                if attachments:
+                    for attachment in attachments:
+                        # Extract text response
+                        if hasattr(attachment, 'text'):
+                            candidate_text = attachment.text
+                        elif isinstance(attachment, dict):
+                            candidate_text = attachment.get('text')
+                        else:
+                            candidate_text = None
+                        
+                        if candidate_text and candidate_text != question:
+                            print(f"DEBUG: Found text in attachment: {candidate_text[:200]}")
+                            if not genie_response:
+                                genie_response = candidate_text
+                        
+                        # Extract SQL query from attachment
+                        if hasattr(attachment, 'query'):
+                            candidate_query = attachment.query
+                        elif isinstance(attachment, dict):
+                            candidate_query = attachment.get('query')
+                        else:
+                            candidate_query = None
+                        
+                        if candidate_query and not sql_query:
+                            sql_query = candidate_query
+                            print(f"DEBUG: Found query in attachment: {sql_query[:200]}")
+                        
+                        # Extract attachment_id for query results
+                        attachment_id = None
+                        if hasattr(attachment, 'attachment_id'):
+                            attachment_id = attachment.attachment_id
+                        elif isinstance(attachment, dict):
+                            attachment_id = attachment.get('attachment_id') or attachment.get('id')
+                        
+                        # Get query results using attachment_id
+                        if attachment_id and conversation_id:
+                            try:
+                                query_result = genie.get_message_query_result(
+                                    space_id=GENIE_ROOM_ID,
+                                    conversation_id=conversation_id,
+                                    message_id=message_id,
+                                    attachment_id=attachment_id
+                                )
+                                print(f"DEBUG: get_message_query_result returned: {type(query_result)}")
+                                if query_result and not query_data:
+                                    # Extract query data
+                                    if hasattr(query_result, 'data'):
+                                        query_data = query_result.data
+                                    elif hasattr(query_result, 'result'):
+                                        query_data = query_result.result
+                                    elif hasattr(query_result, 'rows'):
+                                        query_data = query_result.rows
+                                    elif isinstance(query_result, dict):
+                                        query_data = query_result.get('data') or query_result.get('result') or query_result.get('rows')
+                                    print(f"DEBUG: Found query_data from attachment: {str(query_data)[:200] if query_data else None}")
+                            except Exception as e:
+                                print(f"DEBUG: Error getting query result from attachment: {e}")
                 
                 # Extract answer/content from message details (if not already found)
                 if not genie_response:
@@ -470,68 +565,56 @@ Question asked: {question}"""
                         if candidate and candidate != question:
                             genie_response = candidate
                 
-                # Try to get query result which contains SQL and data
-                try:
-                    query_result = genie.get_message_query_result(message_id=message_id)
-                    print(f"DEBUG: get_message_query_result returned: {type(query_result)}")
-                    if query_result:
-                        print(f"DEBUG: query_result attributes: {dir(query_result) if hasattr(query_result, '__dict__') else 'N/A'}")
-                        
-                        # Extract SQL query - try multiple attributes
-                        if hasattr(query_result, 'sql_query'):
-                            sql_query = query_result.sql_query
-                            print(f"DEBUG: Found sql_query: {sql_query[:200] if sql_query else None}")
-                        elif hasattr(query_result, 'query'):
-                            sql_query = query_result.query
-                            print(f"DEBUG: Found query: {sql_query[:200] if sql_query else None}")
-                        elif hasattr(query_result, 'sql'):
-                            sql_query = query_result.sql
-                            print(f"DEBUG: Found sql: {sql_query[:200] if sql_query else None}")
-                        elif hasattr(query_result, 'query_text'):
-                            sql_query = query_result.query_text
-                            print(f"DEBUG: Found query_text: {sql_query[:200] if sql_query else None}")
-                        elif hasattr(query_result, 'query_string'):
-                            sql_query = query_result.query_string
-                            print(f"DEBUG: Found query_string: {sql_query[:200] if sql_query else None}")
-                        elif isinstance(query_result, dict):
-                            sql_query = (query_result.get('sql_query') or 
-                                        query_result.get('query') or 
-                                        query_result.get('sql') or
-                                        query_result.get('query_text') or
-                                        query_result.get('query_string'))
-                            print(f"DEBUG: Found in dict: {sql_query[:200] if sql_query else None}")
-                        
-                        # Extract query data/results - try multiple structures
-                        if hasattr(query_result, 'data'):
-                            query_data = query_result.data
-                        elif hasattr(query_result, 'result'):
-                            query_data = query_result.result
-                        elif hasattr(query_result, 'rows'):
-                            query_data = query_result.rows
-                        elif hasattr(query_result, 'result_set'):
-                            query_data = query_result.result_set
-                        elif hasattr(query_result, 'data_array'):
-                            query_data = query_result.data_array
-                        elif isinstance(query_result, dict):
-                            query_data = (query_result.get('data') or 
-                                         query_result.get('result') or 
-                                         query_result.get('rows') or
-                                         query_result.get('result_set') or
-                                         query_result.get('data_array'))
-                        
-                        # If query_data is a complex object, try to extract rows/values
-                        if query_data and hasattr(query_data, 'rows'):
-                            query_data = query_data.rows
-                        elif query_data and hasattr(query_data, 'data'):
-                            query_data = query_data.data
-                        elif query_data and isinstance(query_data, dict) and 'rows' in query_data:
-                            query_data = query_data['rows']
-                        elif query_data and isinstance(query_data, dict) and 'data' in query_data:
-                            query_data = query_data['data']
+                # Fallback: Try old method if attachments didn't work
+                if not genie_response or not sql_query:
+                    # Try to get query result which contains SQL and data (legacy method)
+                    try:
+                        query_result = genie.get_message_query_result(space_id=GENIE_ROOM_ID, message_id=message_id)
+                        print(f"DEBUG: get_message_query_result (legacy) returned: {type(query_result)}")
+                        if query_result:
+                            print(f"DEBUG: query_result attributes: {dir(query_result) if hasattr(query_result, '__dict__') else 'N/A'}")
                             
-                except Exception as e:
-                    # Query result extraction failed, try alternative method
-                    pass
+                            # Extract SQL query - try multiple attributes
+                            if not sql_query:
+                                if hasattr(query_result, 'sql_query'):
+                                    sql_query = query_result.sql_query
+                                    print(f"DEBUG: Found sql_query: {sql_query[:200] if sql_query else None}")
+                                elif hasattr(query_result, 'query'):
+                                    sql_query = query_result.query
+                                    print(f"DEBUG: Found query: {sql_query[:200] if sql_query else None}")
+                                elif isinstance(query_result, dict):
+                                    sql_query = (query_result.get('sql_query') or 
+                                                query_result.get('query') or 
+                                                query_result.get('sql'))
+                                    print(f"DEBUG: Found in dict: {sql_query[:200] if sql_query else None}")
+                            
+                            # Extract query data/results - try multiple structures
+                            if not query_data:
+                                if hasattr(query_result, 'data'):
+                                    query_data = query_result.data
+                                elif hasattr(query_result, 'result'):
+                                    query_data = query_result.result
+                                elif hasattr(query_result, 'rows'):
+                                    query_data = query_result.rows
+                                elif isinstance(query_result, dict):
+                                    query_data = (query_result.get('data') or 
+                                                 query_result.get('result') or 
+                                                 query_result.get('rows'))
+                                
+                                # If query_data is a complex object, try to extract rows/values
+                                if query_data and hasattr(query_data, 'rows'):
+                                    query_data = query_data.rows
+                                elif query_data and hasattr(query_data, 'data'):
+                                    query_data = query_data.data
+                                elif query_data and isinstance(query_data, dict) and 'rows' in query_data:
+                                    query_data = query_data['rows']
+                                
+                                print(f"DEBUG: Found query_data (legacy): {str(query_data)[:200] if query_data else None}")
+                                
+                    except Exception as e:
+                        # Query result extraction failed, try alternative method
+                        print(f"DEBUG: Error getting query result (legacy): {e}")
+                        pass
                 
                 # Try alternative: wait for message to complete, then get results
                 # This should have been done earlier, but try again if we still don't have answer
