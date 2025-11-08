@@ -263,7 +263,7 @@ def get_battery_info(
 # Tool 5: Query Genie (Databricks Genie API)
 @tool
 def query_genie(
-    question: Annotated[str, "A natural language question about battery data that predefined tools can't answer. Genie will generate and execute SQL automatically."]
+    question: Annotated[str, "A natural language question about battery data. Genie will generate and execute SQL automatically."]
 ) -> str:
     """Query Databricks Genie to answer questions using natural language.
     
@@ -328,7 +328,7 @@ Question asked: {question}"""
         
         # Wait a moment for Genie to complete processing
         import time
-        time.sleep(2)  # Give Genie more time to process and execute query
+        time.sleep(5)  # Give Genie more time to process and execute query
         
         # Extract message ID to fetch detailed results
         message_id = None
@@ -524,18 +524,73 @@ Question asked: {question}"""
         # Prioritize Genie's answer - it contains the actual formatted answer with numbers
         response_parts = []
         
+        # Check if we got a valid answer from Genie
+        import re
+        has_valid_answer = False
+        
         # Include Genie's answer FIRST - this is what the agent should use
         if genie_response and genie_response != question:
             # Check if genie_response contains actual answer (not just question)
             # Genie's answer should contain the actual numbers/results
             if len(genie_response) > len(question) + 10:  # Answer should be longer
                 # Check if it contains numbers (likely an actual answer)
-                import re
                 if re.search(r'\d+', genie_response) or 'MWh' in genie_response or 'MW' in genie_response or '$' in genie_response:
                     # This is Genie's actual answer - put it first and make it prominent
                     response_parts.append(f"{genie_response}")
-                else:
-                    response_parts.append(f"Genie Response: {genie_response}")
+                    has_valid_answer = True
+        
+        # Check query_data for valid results
+        if query_data:
+            try:
+                # Check if query_data has actual data
+                if isinstance(query_data, list) and len(query_data) > 0:
+                    has_valid_answer = True
+                elif isinstance(query_data, dict) and ('rows' in query_data or 'data' in query_data):
+                    rows_or_data = query_data.get('rows') or query_data.get('data')
+                    if rows_or_data and len(rows_or_data) > 0:
+                        has_valid_answer = True
+            except Exception:
+                pass
+        
+        # If we don't have a valid answer, FAIL explicitly
+        if not has_valid_answer and not sql_query:
+            error_msg = f"""Genie Error: Could not extract answer from Genie response.
+
+Question: {question}
+Genie Response: {genie_response if genie_response else 'None'}
+Message ID: {message_id if message_id else 'None'}
+Conversation ID: {conversation_id if conversation_id else 'None'}
+
+Please check:
+1. Genie space exists and is accessible
+2. Question was properly sent to Genie
+3. Genie has completed processing (check Genie UI)
+4. GENIE_ROOM_ID is set correctly: {GENIE_ROOM_ID if GENIE_ROOM_ID else 'NOT SET'}
+
+The agent cannot proceed without Genie's answer."""
+            raise Exception(error_msg)
+        
+        # If we have SQL but no answer, that's also a problem
+        if sql_query and not has_valid_answer:
+            error_msg = f"""Genie Error: SQL was generated but no answer was extracted.
+
+Question: {question}
+SQL Generated: {sql_query[:200]}...
+Genie Response: {genie_response if genie_response else 'None'}
+
+Please check the Genie UI for the actual answer. The agent cannot proceed without Genie's answer."""
+            raise Exception(error_msg)
+        
+        # If we still don't have a valid answer after all checks, fail
+        if not response_parts and not has_valid_answer:
+            error_msg = f"""Genie Error: No valid answer extracted from Genie.
+
+Question: {question}
+Genie Response: {genie_response if genie_response else 'None'}
+Query Data: {str(query_data)[:200] if query_data else 'None'}
+
+The agent cannot proceed without Genie's answer."""
+            raise Exception(error_msg)
         
         # Then add SQL query if available
         if sql_query:
@@ -586,10 +641,6 @@ Question asked: {question}"""
             except Exception as e:
                 # If formatting fails, just include raw data
                 response_parts.append(f"\n**Raw Query Results:**\n{str(query_data)}")
-        
-        if not response_parts:
-            # If we got nothing useful, return the question (shouldn't happen)
-            response_parts.append(f"Genie processed your question: {question}\n\nNote: SQL and results may be available in the Genie conversation.")
         
         response = "\n".join(response_parts)
         response += "\n\n---\n*Note: This answer and SQL were dynamically generated by Databricks Genie.*"
