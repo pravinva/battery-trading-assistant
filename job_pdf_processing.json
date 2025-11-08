@@ -1,0 +1,28 @@
+{
+  "name": "process-pdf-and-create-index",
+  "tasks": [
+    {
+      "task_key": "process_pdf",
+      "notebook_task": {
+        "notebook_path": "/Users/pravin.varma@databricks.com/battery-trading/process_pdf_index",
+        "source": "WORKSPACE"
+      },
+      "new_cluster": {
+        "spark_version": "15.4.x-scala2.12",
+        "node_type_id": "i3.xlarge",
+        "num_workers": 0,
+        "spark_conf": {
+          "spark.databricks.cluster.profile": "singleNode",
+          "spark.master": "local[*]"
+        },
+        "custom_tags": {
+          "ResourceClass": "SingleNode"
+        },
+        "enable_unity_catalog": true
+      },
+      "timeout_seconds": 3600
+    }
+  ],
+  "format": "MULTI_TASK"
+}
+
