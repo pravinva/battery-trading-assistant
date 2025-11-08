@@ -26,19 +26,15 @@
    ```
    *(Note: You can also use `battery_dispatch.battery_id` or `battery_assets.battery_id` depending on which table you're primarily querying)*
 
-   **Values Field** (enter one per line):
-   ```
-   RESS2
-   DPNTBESS
-   GANNBG1
-   GANNBL1
-   ```
-   *Important: Enter each value on a separate line, or use commas if the UI accepts comma-separated values*
+   **Values Field**: 
+   - ⚠️ **No Values field needed!** Genie will automatically discover values (RESS2, DPNTBESS, GANNBG1, GANNBL1) from your data
+   - Just leave it empty or skip if the field doesn't exist
 
-   **Instructions Field** (optional):
+   **Instructions Field** (optional but recommended):
    ```
-   Battery identifier - RESS2 and DPNTBESS at Darlington Point, GANNBG1 and GANNBL1 at Wooreen
+   Battery identifier - RESS2 and DPNTBESS at Darlington Point, GANNBG1 and GANNBL1 at Wooreen. Valid values: RESS2, DPNTBESS, GANNBG1, GANNBL1
    ```
+   *Adding the values in Instructions helps Genie understand what values to expect*
 
 4. **Save**
    - Click **"Save"** or **"Add"** button to save the dimension
@@ -57,59 +53,50 @@
 │ SQL Expression:                          │
 │ [battery_telemetry.battery_id ]         │
 │                                          │
-│ Values (one per line):                   │
-│ ┌─────────────────────────────────────┐ │
-│ │ RESS2                                │ │
-│ │ DPNTBESS                             │ │
-│ │ GANNBG1                              │ │
-│ │ GANNBL1                              │ │
-│ └─────────────────────────────────────┘ │
-│                                          │
 │ Instructions (optional):                 │
-│ [Battery identifier - RESS2 and...]      │
+│ [Battery identifier - RESS2 and DPNTBESS │
+│  at Darlington Point, GANNBG1 and       │
+│  GANNBL1 at Wooreen. Valid values:       │
+│  RESS2, DPNTBESS, GANNBG1, GANNBL1]     │
 │                                          │
 │ [Cancel]  [Save/Add]                     │
 └─────────────────────────────────────────┘
 ```
 
+**Note**: There's no "Values" field - Genie auto-discovers values from your data!
+
 ---
 
 ## Tips:
 
-1. **Values Format**: 
-   - Some UIs accept one value per line (press Enter after each)
-   - Some accept comma-separated: `RESS2, DPNTBESS, GANNBG1, GANNBL1`
-   - Check the UI format - it usually shows placeholder text
+1. **No Values Field Needed**: 
+   - Genie automatically discovers values from your data
+   - Just enter Name and SQL Expression
+   - Genie will find RESS2, DPNTBESS, GANNBG1, GANNBL1 from the tables
 
 2. **SQL Expression**:
    - Must include table name: `battery_telemetry.battery_id`
    - Not just `battery_id` (will cause error)
 
-3. **If Values Field Doesn't Exist**:
-   - Some Genie versions might not have a "Values" field
-   - In that case, just enter Name and SQL Expression
-   - Genie will discover values automatically from the data
+3. **Instructions Help**:
+   - Even though there's no Values field, adding values in Instructions helps Genie understand context
+   - Example: "Valid values: RESS2, DPNTBESS, GANNBG1, GANNBL1"
 
 4. **Testing**:
    - After saving, try asking Genie: "Show me data for RESS2"
-   - It should recognize RESS2 as a Battery ID value
+   - Genie should recognize RESS2 as a Battery ID value automatically
 
 ---
 
-## Quick Copy-Paste Values:
+## What to Enter (Simplified):
 
-**For Values field** (copy exactly as shown, one per line):
-```
-RESS2
-DPNTBESS
-GANNBG1
-GANNBG1
-```
+**Just these two fields:**
 
-**Or if comma-separated format:**
-```
-RESS2, DPNTBESS, GANNBG1, GANNBL1
-```
+1. **Name**: `Battery ID`
+2. **SQL Expression**: `battery_telemetry.battery_id`
+3. **Instructions** (optional): `Battery identifier. Valid values: RESS2, DPNTBESS, GANNBG1, GANNBL1`
+
+That's it! Genie will discover the values automatically.
 
 ---
 
@@ -119,8 +106,9 @@ RESS2, DPNTBESS, GANNBG1, GANNBL1
 - **Fix**: Make sure SQL Expression includes table name: `battery_telemetry.battery_id`
 
 **Issue**: Values not recognized
-- **Fix**: Check spelling - must match exactly: `RESS2` (all caps), not `ress2` or `Ress2`
+- **Fix**: Genie auto-discovers values, but you can help by mentioning them in Instructions field
+- **Fix**: Make sure your tables have data - Genie reads values from actual data
 
-**Issue**: Can't find "Values" field
-- **Fix**: Some Genie versions auto-discover values - just enter Name and SQL Expression
+**Issue**: No "Values" field
+- **Fix**: This is normal! Genie auto-discovers values from your data. Just enter Name and SQL Expression.
 
