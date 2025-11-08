@@ -4,6 +4,10 @@
 
 Go to: **Genie > Battery Trading Agent > Configure > Instructions > SQL Expressions**
 
+**Important**: Genie requires table names in SQL expressions. Use the format `table_name.column_name`.
+
+If you get errors, try fully qualified names: `ea_trading.battery_trading.table_name.column_name`
+
 ---
 
 ## 📊 MEASURES (Click "Add" → Select "Measure")
