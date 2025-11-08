@@ -513,6 +513,28 @@ Question asked: {question}"""
                     attachments = message_details.get('attachments')
                 
                 print(f"DEBUG: Attachments: {attachments}")
+                print(f"DEBUG: Number of attachments: {len(attachments) if attachments else 0}")
+                
+                # Log attachments to debug file
+                try:
+                    import json
+                    with open(debug_log_path, "a") as f:
+                        f.write(f"\nAttachments:\n")
+                        if attachments:
+                            for idx, att in enumerate(attachments):
+                                f.write(f"  Attachment {idx + 1}:\n")
+                                if hasattr(att, '__dict__'):
+                                    f.write(f"    Type: {type(att)}\n")
+                                    f.write(f"    __dict__: {json.dumps({k: str(v)[:500] for k, v in att.__dict__.items()}, indent=4, default=str)}\n")
+                                elif hasattr(att, 'as_dict'):
+                                    f.write(f"    as_dict: {json.dumps(att.as_dict(), indent=4, default=str)}\n")
+                                else:
+                                    f.write(f"    Value: {str(att)[:500]}\n")
+                        else:
+                            f.write("  No attachments\n")
+                        f.write(f"{'='*80}\n")
+                except Exception as e:
+                    print(f"DEBUG: Error logging attachments: {e}")
                 
                 # Extract response from attachments (per Genie API docs)
                 if attachments:
