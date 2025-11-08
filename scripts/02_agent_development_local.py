@@ -290,46 +290,47 @@ def query_genie(
     Returns Genie's response with query results."""
     
     try:
-        # Use Genie Conversation API
-        # Note: Genie room/conversation needs to be set up first
-        # This is a placeholder - you'll need to configure Genie room ID
-        
-        # Option 1: Use Genie Conversation API (if available)
-        # Check if genie API is available in SDK
-        if hasattr(w, 'genie') or hasattr(w, 'conversations'):
-            # Try to use Genie API
-            try:
-                # This is the expected API structure - adjust based on actual SDK
-                response = w.genie.query(
-                    room_id=GENIE_ROOM_ID,  # You'll need to set this
-                    question=question
-                )
-                return response.get('answer', str(response))
-            except AttributeError:
-                pass
-        
-        # Option 2: Fallback - Use Genie via SQL Warehouse with natural language
-        # Genie can be accessed through SQL warehouses with special syntax
-        # For now, we'll use a direct Genie API call if available
-        
-        # If Genie API is not available, provide helpful error message
-        return f"""Genie API is not configured. To use Genie:
-        
-1. Create a Genie room in Databricks:
-   - Go to SQL Editor
-   - Create a new Genie room/conversation
-   - Note the room ID
+        if not GENIE_ROOM_ID:
+            return f"""Genie space ID not configured. 
 
-2. Configure GENIE_ROOM_ID in this script
-
-3. Ensure Genie Conversation API is enabled in your workspace
-
-For now, you can use execute_custom_sql tool to write SQL queries directly.
+To use Genie:
+1. Create a Genie space named 'battery-trading-agent' in Databricks UI
+2. Run: python3 scripts/create_genie_room.py
+3. Set environment variable: export GENIE_ROOM_ID=\"<space_id>\"
 
 Question asked: {question}"""
         
+        # Use Genie Conversation API
+        # Start a conversation in the space and send a message
+        genie = w.genie
+        
+        # Start a conversation in the space
+        conversation = genie.start_conversation(space_id=GENIE_ROOM_ID)
+        conversation_id = conversation.conversation_id
+        
+        # Send message to Genie
+        message = genie.create_message_and_wait(
+            conversation_id=conversation_id,
+            content=question
+        )
+        
+        # Get the response
+        if hasattr(message, 'content'):
+            return message.content
+        elif hasattr(message, 'answer'):
+            return message.answer
+        else:
+            # Try to get the message result
+            message_id = getattr(message, 'message_id', None)
+            if message_id:
+                result = genie.get_message_query_result(message_id=message_id)
+                if result and hasattr(result, 'data'):
+                    return str(result.data)
+                return str(result)
+            return str(message)
+        
     except Exception as e:
-        return f"Genie Error: {str(e)}\n\nPlease ensure Genie is configured and GENIE_ROOM_ID is set correctly."
+        return f"Genie Error: {str(e)}\n\nPlease ensure:\n1. Genie space 'battery-trading-agent' exists\n2. GENIE_ROOM_ID is set correctly\n3. You have permissions to use the space\n\nQuestion asked: {question}"
 
 # Configuration for Genie
 GENIE_ROOM_ID = os.environ.get("GENIE_ROOM_ID", None)  # Set this to your Genie room ID
