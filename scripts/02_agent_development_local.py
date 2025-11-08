@@ -358,8 +358,8 @@ Question asked: {question}"""
             while time.time() - start_time < max_poll_time:
                 try:
                     poll_count += 1
-                    # Get message status
-                    message_details = genie.get_message(space_id=GENIE_ROOM_ID, message_id=message_id)
+                    # Get message status - requires conversation_id
+                    message_details = genie.get_message(space_id=GENIE_ROOM_ID, conversation_id=conversation_id, message_id=message_id)
                     
                     # Extract status
                     if hasattr(message_details, 'status'):
@@ -466,7 +466,8 @@ Question asked: {question}"""
         if message_id and GENIE_ROOM_ID:
             try:
                 # Get the message details - this should contain the answer
-                message_details = genie.get_message(space_id=GENIE_ROOM_ID, message_id=message_id)
+                # Note: get_message requires conversation_id
+                message_details = genie.get_message(space_id=GENIE_ROOM_ID, conversation_id=conversation_id, message_id=message_id)
                 print(f"DEBUG: get_message returned: {type(message_details)}")
                 print(f"DEBUG: message_details attributes: {dir(message_details) if hasattr(message_details, '__dict__') else 'N/A'}")
                 

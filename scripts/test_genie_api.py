@@ -84,7 +84,7 @@ poll_count = 0
 while time.time() - start_time < max_poll_time:
     try:
         poll_count += 1
-        message_details = genie.get_message(space_id=GENIE_ROOM_ID, message_id=message_id)
+        message_details = genie.get_message(space_id=GENIE_ROOM_ID, conversation_id=conversation_id, message_id=message_id)
         
         # Extract status
         if hasattr(message_details, 'status'):
