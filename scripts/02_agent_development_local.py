@@ -326,9 +326,19 @@ Question asked: {question}"""
             # If Wait handling fails, try to use it directly
             message = conversation_wait
         
-        # Wait a moment for Genie to complete processing
+        # Wait for Genie to complete processing - use wait_get_message_genie_completed
         import time
-        time.sleep(5)  # Give Genie more time to process and execute query
+        if message_id:
+            try:
+                # Wait for Genie to complete processing (up to 30 seconds)
+                completed_message = genie.wait_get_message_genie_completed(message_id=message_id, timeout=30)
+                if completed_message:
+                    message = completed_message  # Use the completed message
+            except Exception as e:
+                # If wait fails, fall back to sleep
+                time.sleep(10)  # Give Genie more time to process
+        else:
+            time.sleep(10)  # If no message_id, wait longer
         
         # Extract message ID to fetch detailed results
         message_id = None
@@ -352,6 +362,9 @@ Question asked: {question}"""
         query_data = None
         
         # First, try to get the assistant's response from conversation messages
+        # Wait a bit more for Genie to process
+        time.sleep(3)
+        
         if conversation_id:
             try:
                 messages = genie.list_conversation_messages(conversation_id=conversation_id)
@@ -366,25 +379,33 @@ Question asked: {question}"""
                         msg_list = messages
                     
                     if msg_list:
-                        # Get the last message (should be Genie's response)
+                        # Get ALL messages to find the assistant response
                         for msg in reversed(msg_list):
                             # Look for assistant/genie messages
                             role = getattr(msg, 'role', None) or (isinstance(msg, dict) and msg.get('role'))
                             content = getattr(msg, 'content', None) or (isinstance(msg, dict) and msg.get('content'))
                             
-                            if content and content != question:
-                                # Check if it's an assistant response
-                                if role and role.lower() in ['assistant', 'genie', 'ai']:
+                            # Debug: print message structure
+                            # print(f"DEBUG: Message role={role}, content={content[:100] if content else None}")
+                            
+                            # Skip if content is the question itself
+                            if content == question:
+                                continue
+                            
+                            # Check if it's an assistant response
+                            if role and role.lower() in ['assistant', 'genie', 'ai']:
+                                if content and len(content) > len(question) + 10:  # Answer should be longer
                                     genie_response = content
                                     break
-                                elif not role or role.lower() == 'user':
-                                    # Skip user messages
-                                    continue
-                                else:
-                                    # If no role specified but content is different, use it
+                            elif content and len(content) > len(question) + 10:
+                                # If no role but content is different and longer, might be answer
+                                # Check if it contains numbers or units (likely an answer)
+                                import re
+                                if re.search(r'\d+', content) or 'MWh' in content or 'MW' in content or '$' in content:
                                     genie_response = content
                                     break
             except Exception as e:
+                # Log error for debugging
                 pass
         
         # Then try to get message details and query results
@@ -469,27 +490,39 @@ Question asked: {question}"""
                     pass
                 
                 # Try alternative: wait for message to complete, then get results
-                try:
-                    # Use wait_get_message_genie_completed to ensure message is fully processed
-                    completed_message = genie.wait_get_message_genie_completed(message_id=message_id)
-                    if completed_message:
-                        # Extract from completed message - this should have the full answer
-                        if not genie_response:
+                # This should have been done earlier, but try again if we still don't have answer
+                if not genie_response:
+                    try:
+                        # Use wait_get_message_genie_completed to ensure message is fully processed
+                        completed_message = genie.wait_get_message_genie_completed(message_id=message_id, timeout=30)
+                        if completed_message:
+                            # Extract from completed message - this should have the full answer
                             if hasattr(completed_message, 'content'):
-                                genie_response = completed_message.content
+                                candidate = completed_message.content
                             elif hasattr(completed_message, 'answer'):
-                                genie_response = completed_message.answer
+                                candidate = completed_message.answer
                             elif hasattr(completed_message, 'text'):
-                                genie_response = completed_message.text
+                                candidate = completed_message.text
                             # Check nested message structure
                             elif hasattr(completed_message, 'message'):
                                 msg_obj = completed_message.message
                                 if hasattr(msg_obj, 'content'):
-                                    genie_response = msg_obj.content
+                                    candidate = msg_obj.content
                                 elif hasattr(msg_obj, 'text'):
-                                    genie_response = msg_obj.text
-                except Exception:
-                    pass
+                                    candidate = msg_obj.text
+                                else:
+                                    candidate = None
+                            else:
+                                candidate = None
+                            
+                            # Only use if it's different from question and contains actual answer
+                            if candidate and candidate != question and len(candidate) > len(question) + 10:
+                                import re
+                                if re.search(r'\d+', candidate) or 'MWh' in candidate or 'MW' in candidate or '$' in candidate:
+                                    genie_response = candidate
+                    except Exception as e:
+                        # If wait fails, that's okay - we'll try other methods
+                        pass
                 
                 # Try alternative method: execute_message_query
                 if not query_data:
