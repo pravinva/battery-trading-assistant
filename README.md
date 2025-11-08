@@ -118,13 +118,22 @@ Execute the notebooks in order:
 - Copy this run ID for next notebook
 
 #### Phase 3: Agent Evaluation (`03_agent_evaluation.py`)
-- Creates evaluation dataset
-- Runs MLflow evaluation
+- Creates evaluation dataset (8 questions covering structured, unstructured, and hybrid queries)
+- Runs MLflow Agent Evaluation
 - Measures retrieval quality and response accuracy
 
 **Expected Output:**
-- Evaluation metrics (precision, relevance, groundedness)
-- Evaluation results table
+- Evaluation metrics:
+  - **Retrieval Precision**: Relevance of retrieved documentation chunks (0.0-1.0)
+  - **Response Relevance**: How well answer addresses question (1-5 scale)
+  - **Groundedness**: How well answer is supported by data (1-5 scale)
+- Evaluation results table with per-question scores
+
+**Viewing Results:**
+- **MLflow UI**: Go to Experiments → `/Users/<your_email>/battery_agent_dev` → `battery_agent_evaluation` run
+- **Metrics Tab**: View overall metrics (precision, relevance, groundedness)
+- **Artifacts Tab**: Download `eval_results_table.parquet` for detailed per-question results
+- See `docs/AGENT_EVALUATION_GUIDE.md` for detailed instructions
 
 #### Phase 4: Deployment (`04_deployment.py`)
 - Registers agent model to Unity Catalog
