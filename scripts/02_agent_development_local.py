@@ -329,7 +329,7 @@ Question asked: {question}"""
         
         # Wait a moment for Genie to complete processing
         import time
-        time.sleep(1)  # Give Genie time to process and execute query
+        time.sleep(2)  # Give Genie more time to process and execute query
         
         # Extract message ID to fetch detailed results
         message_id = None
@@ -340,35 +340,80 @@ Question asked: {question}"""
         elif isinstance(message, dict):
             message_id = message.get('message_id') or message.get('id')
         
+        # Also get conversation_id for listing messages
+        conversation_id = None
+        if hasattr(message, 'conversation_id'):
+            conversation_id = message.conversation_id
+        elif isinstance(message, dict):
+            conversation_id = message.get('conversation_id')
+        
         # Try to get the full message details including SQL and results
         sql_query = None
         genie_response = None
         query_data = None
         
+        # First, try to get the assistant's response from conversation messages
+        if conversation_id:
+            try:
+                messages = genie.list_conversation_messages(conversation_id=conversation_id)
+                if messages:
+                    # Handle different response structures
+                    msg_list = None
+                    if hasattr(messages, 'messages'):
+                        msg_list = messages.messages
+                    elif hasattr(messages, 'items'):
+                        msg_list = messages.items
+                    elif isinstance(messages, list):
+                        msg_list = messages
+                    
+                    if msg_list:
+                        # Get the last message (should be Genie's response)
+                        for msg in reversed(msg_list):
+                            # Look for assistant/genie messages
+                            role = getattr(msg, 'role', None) or (isinstance(msg, dict) and msg.get('role'))
+                            content = getattr(msg, 'content', None) or (isinstance(msg, dict) and msg.get('content'))
+                            
+                            if content and content != question:
+                                # Check if it's an assistant response
+                                if role and role.lower() in ['assistant', 'genie', 'ai']:
+                                    genie_response = content
+                                    break
+                                elif not role or role.lower() == 'user':
+                                    # Skip user messages
+                                    continue
+                                else:
+                                    # If no role specified but content is different, use it
+                                    genie_response = content
+                                    break
+            except Exception as e:
+                pass
+        
+        # Then try to get message details and query results
         if message_id:
             try:
                 # Get the message details - this should contain the answer
                 message_details = genie.get_message(message_id=message_id)
                 
-                # Extract answer/content from message details
-                if hasattr(message_details, 'content'):
-                    genie_response = message_details.content
-                elif hasattr(message_details, 'answer'):
-                    genie_response = message_details.answer
-                elif hasattr(message_details, 'text'):
-                    genie_response = message_details.text
-                elif hasattr(message_details, 'message'):
-                    # Sometimes answer is nested in message object
-                    msg_obj = message_details.message
-                    if hasattr(msg_obj, 'content'):
-                        genie_response = msg_obj.content
-                    elif hasattr(msg_obj, 'text'):
-                        genie_response = msg_obj.text
-                elif isinstance(message_details, dict):
-                    genie_response = (message_details.get('content') or 
-                                     message_details.get('answer') or 
-                                     message_details.get('text') or
-                                     message_details.get('message', {}).get('content'))
+                # Extract answer/content from message details (if not already found)
+                if not genie_response:
+                    if hasattr(message_details, 'content'):
+                        genie_response = message_details.content
+                    elif hasattr(message_details, 'answer'):
+                        genie_response = message_details.answer
+                    elif hasattr(message_details, 'text'):
+                        genie_response = message_details.text
+                    elif hasattr(message_details, 'message'):
+                        # Sometimes answer is nested in message object
+                        msg_obj = message_details.message
+                        if hasattr(msg_obj, 'content'):
+                            genie_response = msg_obj.content
+                        elif hasattr(msg_obj, 'text'):
+                            genie_response = msg_obj.text
+                    elif isinstance(message_details, dict):
+                        genie_response = (message_details.get('content') or 
+                                         message_details.get('answer') or 
+                                         message_details.get('text') or
+                                         message_details.get('message', {}).get('content'))
                 
                 # Try to get query result which contains SQL and data
                 try:
@@ -430,41 +475,22 @@ Question asked: {question}"""
                     completed_message = genie.wait_get_message_genie_completed(message_id=message_id)
                     if completed_message:
                         # Extract from completed message - this should have the full answer
-                        if hasattr(completed_message, 'content') and not genie_response:
-                            genie_response = completed_message.content
-                        elif hasattr(completed_message, 'answer') and not genie_response:
-                            genie_response = completed_message.answer
-                        elif hasattr(completed_message, 'text') and not genie_response:
-                            genie_response = completed_message.text
-                        # Check nested message structure
-                        elif hasattr(completed_message, 'message'):
-                            msg_obj = completed_message.message
-                            if hasattr(msg_obj, 'content') and not genie_response:
-                                genie_response = msg_obj.content
-                            elif hasattr(msg_obj, 'text') and not genie_response:
-                                genie_response = msg_obj.text
+                        if not genie_response:
+                            if hasattr(completed_message, 'content'):
+                                genie_response = completed_message.content
+                            elif hasattr(completed_message, 'answer'):
+                                genie_response = completed_message.answer
+                            elif hasattr(completed_message, 'text'):
+                                genie_response = completed_message.text
+                            # Check nested message structure
+                            elif hasattr(completed_message, 'message'):
+                                msg_obj = completed_message.message
+                                if hasattr(msg_obj, 'content'):
+                                    genie_response = msg_obj.content
+                                elif hasattr(msg_obj, 'text'):
+                                    genie_response = msg_obj.text
                 except Exception:
                     pass
-                
-                # Also try listing conversation messages to get the assistant's response
-                if not genie_response or genie_response == question:
-                    try:
-                        conversation_id = getattr(message, 'conversation_id', None) or getattr(message_details, 'conversation_id', None)
-                        if conversation_id:
-                            messages = genie.list_conversation_messages(conversation_id=conversation_id)
-                            if messages and hasattr(messages, 'messages'):
-                                # Get the last message (should be Genie's response)
-                                for msg in reversed(messages.messages):
-                                    # Look for assistant/user messages with content
-                                    if hasattr(msg, 'role') and getattr(msg, 'role', '').lower() in ['assistant', 'genie']:
-                                        if hasattr(msg, 'content') and msg.content and msg.content != question:
-                                            genie_response = msg.content
-                                            break
-                                    elif hasattr(msg, 'content') and msg.content and msg.content != question:
-                                        genie_response = msg.content
-                                        break
-                    except Exception:
-                        pass
                 
                 # Try alternative method: execute_message_query
                 if not query_data:
@@ -547,11 +573,17 @@ Question asked: {question}"""
                 # If formatting fails, just include raw data
                 response_parts.append(f"\n**Query Results (raw):**\n{str(query_data)}")
         
-        # Include Genie's answer if available and different from question
+        # Include Genie's answer - prioritize this as it contains the formatted answer
         if genie_response and genie_response != question:
             # Check if genie_response contains actual answer (not just question)
-            if len(genie_response) > len(question) + 20:  # Answer should be longer
-                response_parts.append(f"\n**Genie Answer:**\n{genie_response}")
+            # Genie's answer should contain the actual numbers/results
+            if len(genie_response) > len(question) + 10:  # Answer should be longer
+                # Check if it contains numbers (likely an actual answer)
+                import re
+                if re.search(r'\d+', genie_response) or 'MWh' in genie_response or 'MW' in genie_response:
+                    response_parts.insert(0, f"**Genie Answer:**\n{genie_response}")
+                else:
+                    response_parts.append(f"\n**Genie Answer:**\n{genie_response}")
         
         if not response_parts:
             # If we got nothing useful, return the question (shouldn't happen)
