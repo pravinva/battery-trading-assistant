@@ -260,10 +260,88 @@ def get_battery_info(
     
     return "\n\n".join(output)
 
-# Combine all tools
-tools = [search_battery_docs, get_battery_status, get_battery_revenue, get_battery_info]
+# Tool 5: Execute Custom SQL Query (Genie-like capability)
+@tool
+def execute_custom_sql(
+    sql_query: Annotated[str, "A SQL SELECT query to execute against the battery trading database. Use this when predefined tools can't answer the question. Only SELECT queries are allowed."]
+) -> str:
+    """Execute a custom SQL query against the battery trading database.
+    
+    Use this tool when you need to answer questions that the predefined tools cannot handle.
+    Examples:
+    - Complex aggregations across multiple tables
+    - Time-series analysis with custom time windows
+    - Comparisons between batteries
+    - Custom filtering or grouping
+    
+    Available tables:
+    - {CATALOG}.{SCHEMA}.battery_telemetry: Current SoC and capabilities
+    - {CATALOG}.{SCHEMA}.battery_dispatch: Dispatch history and revenue
+    - {CATALOG}.{SCHEMA}.battery_assets: Asset specifications
+    - {CATALOG}.{SCHEMA}.battery_documents: Document metadata
+    
+    IMPORTANT: Only SELECT queries are allowed. Do not use INSERT, UPDATE, DELETE, DROP, or ALTER.
+    Always use fully qualified table names: {CATALOG}.{SCHEMA}.table_name
+    
+    Returns the query results as formatted text."""
+    
+    # Safety check: Only allow SELECT queries
+    sql_upper = sql_query.strip().upper()
+    if not sql_upper.startswith('SELECT'):
+        return "ERROR: Only SELECT queries are allowed. This tool cannot execute INSERT, UPDATE, DELETE, DROP, or ALTER statements."
+    
+    # Additional safety: Block dangerous keywords
+    dangerous_keywords = ['DROP', 'DELETE', 'UPDATE', 'INSERT', 'ALTER', 'CREATE', 'TRUNCATE', 'EXEC', 'EXECUTE']
+    for keyword in dangerous_keywords:
+        if keyword in sql_upper and keyword != 'SELECT':  # Allow SELECT
+            return f"ERROR: Query contains forbidden keyword '{keyword}'. Only SELECT queries are allowed for safety."
+    
+    try:
+        result = execute_sql(sql_query)
+        
+        if not result:
+            return "Query executed successfully but returned no results."
+        
+        # Format results nicely
+        if len(result) == 0:
+            return "Query executed successfully but returned no rows."
+        
+        # Get column names from first row
+        if result:
+            columns = list(result[0].keys())
+            
+            # Format as table
+            output = []
+            output.append("Query Results:")
+            output.append("=" * 80)
+            
+            # Header
+            header = " | ".join([str(col).ljust(20) for col in columns])
+            output.append(header)
+            output.append("-" * 80)
+            
+            # Rows (limit to 50 rows for readability)
+            max_rows = 50
+            for i, row in enumerate(result[:max_rows]):
+                values = [str(row.get(col, '')).ljust(20)[:20] for col in columns]
+                output.append(" | ".join(values))
+            
+            if len(result) > max_rows:
+                output.append(f"\n... ({len(result) - max_rows} more rows)")
+            
+            output.append(f"\nTotal rows: {len(result)}")
+            
+            return "\n".join(output)
+        else:
+            return "Query executed successfully but returned no results."
+            
+    except Exception as e:
+        return f"SQL Error: {str(e)}\n\nPlease check your query syntax and table names. Remember to use fully qualified names: {CATALOG}.{SCHEMA}.table_name"
 
-print("\n✅ Created 4 agent tools:")
+# Combine all tools
+tools = [search_battery_docs, get_battery_status, get_battery_revenue, get_battery_info, execute_custom_sql]
+
+print("\n✅ Created 5 agent tools:")
 for tool in tools:
     print(f"   - {tool.name}: {tool.description[:80]}...")
 
@@ -287,12 +365,14 @@ Available tools:
 - get_battery_status: For current SoC and capabilities
 - get_battery_revenue: For financial performance analysis
 - get_battery_info: For asset specifications
+- execute_custom_sql: For custom SQL queries when predefined tools can't answer (like Databricks Genie)
 
 When answering:
 - Always use specific data from tools
 - Cite sources (e.g., "According to telemetry..." or "From technical docs page X...")
 - For technical questions, search docs first
 - For operational questions, query live data
+- If predefined tools can't answer, use execute_custom_sql to write your own SQL query
 - Combine both when needed for comprehensive answers"""
 
 # Initialize LLM
