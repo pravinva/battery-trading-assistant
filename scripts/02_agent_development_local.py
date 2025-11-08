@@ -370,9 +370,10 @@ Question asked: {question}"""
         # Wait a bit more for Genie to process
         time.sleep(3)
         
-        if conversation_id:
+        if conversation_id and GENIE_ROOM_ID:
             try:
-                messages = genie.list_conversation_messages(conversation_id=conversation_id)
+                # list_conversation_messages requires space_id as first positional argument
+                messages = genie.list_conversation_messages(GENIE_ROOM_ID, conversation_id=conversation_id)
                 print(f"DEBUG: list_conversation_messages returned: {type(messages)}")
                 if messages:
                     # Handle different response structures
