@@ -13,6 +13,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 os.environ["PYTHONWARNINGS"] = "ignore"
 
 import mlflow
+import threading
 from databricks.sdk import WorkspaceClient
 try:
     from databricks_langchain import ChatDatabricks
@@ -45,10 +46,27 @@ if not warehouses:
 warehouse_id = warehouses[0].id
 print(f"✅ Using SQL warehouse: {warehouses[0].name} (ID: {warehouse_id})")
 
-# Set MLflow
-mlflow.set_registry_uri("databricks-uc")
-current_user = os.environ.get("USER", "unknown")
-mlflow.set_experiment(f"/Users/{current_user}/battery_agent_dev")
+# Lazy MLflow setup - only when needed, non-blocking
+_mlflow_initialized = False
+_mlflow_lock = threading.Lock()
+
+def init_mlflow_lazy():
+    """Initialize MLflow lazily and non-blocking"""
+    global _mlflow_initialized
+    if _mlflow_initialized:
+        return
+    
+    with _mlflow_lock:
+        if _mlflow_initialized:
+            return
+        try:
+            mlflow.set_registry_uri("databricks-uc")
+            current_user = os.environ.get("USER", "unknown")
+            mlflow.set_experiment(f"/Users/{current_user}/battery_agent_dev")
+            _mlflow_initialized = True
+        except Exception:
+            # Silently fail - MLflow is optional
+            pass
 
 print("=" * 80)
 print("Battery Trading Agent Development")
