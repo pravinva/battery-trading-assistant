@@ -116,8 +116,13 @@ print(response.predictions[0]["content"][:300])
 # MAGIC ## 4.3 Create Databricks App
 
 # COMMAND ----------
-# Create app directory structure
-dbutils.fs.mkdirs("/Workspace/Users/<your_email>/battery-trading-app")  # Update with your email!
+# Get current user for app directory
+current_user = spark.sql("SELECT current_user()").collect()[0][0]
+app_dir = f"/Workspace/Users/{current_user}/battery-trading-app"
+
+# Create app directory structure in Workspace (Apps must be in Workspace, not Volumes)
+dbutils.fs.mkdirs(app_dir)
+print(f"✅ Created app directory: {app_dir}")
 
 # COMMAND ----------
 # Write app.py
@@ -220,7 +225,7 @@ if st.sidebar.button("🗑️ Clear Chat"):
 '''
 
 # Write to file
-with open("/Workspace/Users/<your_email>/battery-trading-app/app.py", "w") as f:
+with open(f"{app_dir}/app.py", "w") as f:
     f.write(app_code)
 
 print("✅ Created app.py")
@@ -231,7 +236,7 @@ app_yaml = '''
 command: ["streamlit", "run", "app.py", "--server.port", "8080"]
 '''
 
-with open("/Workspace/Users/<your_email>/battery-trading-app/app.yaml", "w") as f:
+with open(f"{app_dir}/app.yaml", "w") as f:
     f.write(app_yaml)
 
 print("✅ Created app.yaml")
@@ -242,10 +247,10 @@ print("DEPLOYMENT COMPLETE!")
 print("=" * 80)
 print(f"\n✅ Model Registered: {CATALOG}.{SCHEMA}.{MODEL_NAME} (version {registered_model.version})")
 print(f"✅ Endpoint Deployed: {ENDPOINT_NAME}")
-print(f"✅ Databricks App Created: /Workspace/Users/<your_email>/battery-trading-app")
+print(f"✅ Databricks App Created: {app_dir}")
 print(f"\n📋 NEXT STEPS:")
 print(f"1. Go to Databricks Apps in your workspace")
 print(f"2. Click 'Create App'")
-print(f"3. Select source: /Workspace/Users/<your_email>/battery-trading-app")
+print(f"3. Select source: {app_dir}")
 print(f"4. Launch and share with EA trading team!")
 

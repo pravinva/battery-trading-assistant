@@ -200,7 +200,52 @@ print(f"✅ Created battery_dispatch table with {dispatch_df.count()} rows")
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## 1.2 Create Vector Search Index on Battery PDF
+# MAGIC ## 1.2 Create Unity Catalog Volume and Upload PDF
+
+# COMMAND ----------
+# Create Volume for PDF storage (Unity Catalog modern approach)
+volume_name = "pdfs"
+volume_path = f"{catalog}.{schema}.{volume_name}"
+
+try:
+    spark.sql(f"CREATE VOLUME IF NOT EXISTS {volume_path}")
+    print(f"✅ Created Volume: {volume_path}")
+except Exception as e:
+    if "already exists" in str(e).lower() or "RESOURCE_ALREADY_EXISTS" in str(e):
+        print(f"✅ Volume already exists: {volume_path}")
+    else:
+        raise e
+
+# COMMAND ----------
+# Upload battery.pdf to Unity Catalog Volume
+# Note: Upload the PDF file manually via Databricks UI or use dbutils.fs.cp from uploaded location
+# For now, we'll check if it exists, if not, provide instructions
+
+pdf_volume_path = f"/Volumes/{catalog}/{schema}/{volume_name}/battery.pdf"
+
+# Check if PDF exists in Volume
+try:
+    files = dbutils.fs.ls(f"/Volumes/{catalog}/{schema}/{volume_name}/")
+    pdf_exists = any(f.name == "battery.pdf" for f in files)
+    if pdf_exists:
+        print(f"✅ PDF found in Volume: {pdf_volume_path}")
+    else:
+        print(f"⚠️  PDF not found in Volume. Attempting to copy from temporary location...")
+        # Try to copy from dbfs:/tmp if it exists there
+        try:
+            dbutils.fs.cp("dbfs:/tmp/battery.pdf", pdf_volume_path)
+            print(f"✅ Successfully copied PDF from dbfs:/tmp/battery.pdf to Volume")
+        except Exception as copy_error:
+            print(f"⚠️  Could not copy from temporary location. Please upload battery.pdf to: {pdf_volume_path}")
+            print("   You can upload via:")
+            print("   1. Databricks UI: Catalog → Volumes → ea_trading.battery_trading.pdfs → Upload")
+            print("   2. Or upload to dbfs:/tmp/battery.pdf first, then re-run this cell")
+except Exception as e:
+    print(f"⚠️  Volume path not accessible yet. Please ensure PDF is uploaded to: {pdf_volume_path}")
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## 1.3 Create Vector Search Index on Battery PDF
 
 # COMMAND ----------
 from databricks.vector_search.client import VectorSearchClient
@@ -209,11 +254,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 import pandas as pd
 
 # COMMAND ----------
-# Upload battery.pdf to Volumes first
-# Path: /Volumes/ea_trading/battery_trading/pdfs/battery.pdf
-
-# Read and chunk PDF
-pdf_path = "/Volumes/ea_trading/battery_trading/pdfs/battery.pdf"
+# Read and chunk PDF from Unity Catalog Volume
+pdf_path = pdf_volume_path
 reader = PdfReader(pdf_path)
 
 chunks_data = []
@@ -307,7 +349,7 @@ for i, hit in enumerate(results.get('result', {}).get('data_array', []), 1):
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## 1.3 Validation Summary
+# MAGIC ## 1.4 Validation Summary
 
 # COMMAND ----------
 print("=" * 80)
