@@ -34,13 +34,6 @@ When calculating energy throughput:
 - These cumulative fields represent LIFETIME totals, not interval changes
 - Using MAX - MIN on cumulative fields will return NULL or 0 if values don't change in the time window
 
-Example correct throughput query:
-```sql
-SELECT SUM(throughput_mwh) AS total_throughput_mwh
-FROM battery_telemetry
-WHERE timestamp >= current_timestamp() - INTERVAL 12 HOURS
-```
-
 When answering:
 - Always use specific data from tables
 - Cite sources (e.g., "According to telemetry..." or "From dispatch data...")
@@ -133,15 +126,22 @@ WHERE battery_id = 'RESS2'
 GROUP BY battery_id
 ```
 
-**Query 3: Battery asset information**
-- Question: "Get battery asset information"
+**Query 4: Total energy throughput**
+- Question: "What's the total energy throughput for all batteries in the last 12 hours?"
 - SQL:
 ```sql
-SELECT battery_id, site_name, location, 
-       nameplate_capacity_mw, max_soc_mwh, min_soc_mwh,
-       partner, commissioning_date
-FROM ea_trading.battery_trading.battery_assets
-ORDER BY battery_id
+SELECT SUM(throughput_mwh) AS total_throughput_mwh
+FROM ea_trading.battery_trading.battery_telemetry
+WHERE timestamp >= current_timestamp() - INTERVAL 12 HOURS
+```
+
+**Query 5: Energy throughput from dispatch table**
+- Question: "Calculate total energy throughput from dispatch data"
+- SQL:
+```sql
+SELECT ROUND(SUM(ABS(dispatch_mw) * 5.0 / 60.0), 2) AS total_throughput_mwh
+FROM ea_trading.battery_trading.battery_dispatch
+WHERE dispatch_interval >= current_timestamp() - INTERVAL 12 HOURS
 ```
 
 ## How to Add These Instructions
