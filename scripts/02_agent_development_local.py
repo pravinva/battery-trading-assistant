@@ -534,29 +534,34 @@ Question asked: {question}"""
                         elif isinstance(attachment, dict):
                             attachment_id = attachment.get('attachment_id') or attachment.get('id')
                         
-                        # Get query results using attachment_id
-                        if attachment_id and conversation_id:
+                        # Get query results using statement_id from query attachment
+                        # Extract statement_id from the query attachment
+                        statement_id = None
+                        if hasattr(attachment, 'query') and hasattr(attachment.query, 'statement_id'):
+                            statement_id = attachment.query.statement_id
+                        elif isinstance(attachment, dict) and attachment.get('query'):
+                            query_obj = attachment.get('query')
+                            if isinstance(query_obj, dict):
+                                statement_id = query_obj.get('statement_id')
+                            elif hasattr(query_obj, 'statement_id'):
+                                statement_id = query_obj.statement_id
+                        
+                        if statement_id:
                             try:
-                                query_result = genie.get_message_query_result(
-                                    space_id=GENIE_ROOM_ID,
-                                    conversation_id=conversation_id,
-                                    message_id=message_id,
-                                    attachment_id=attachment_id
-                                )
-                                print(f"DEBUG: get_message_query_result returned: {type(query_result)}")
-                                if query_result and not query_data:
-                                    # Extract query data
-                                    if hasattr(query_result, 'data'):
-                                        query_data = query_result.data
-                                    elif hasattr(query_result, 'result'):
-                                        query_data = query_result.result
-                                    elif hasattr(query_result, 'rows'):
-                                        query_data = query_result.rows
-                                    elif isinstance(query_result, dict):
-                                        query_data = query_result.get('data') or query_result.get('result') or query_result.get('rows')
-                                    print(f"DEBUG: Found query_data from attachment: {str(query_data)[:200] if query_data else None}")
+                                # Use statement execution API to get results
+                                from databricks.sdk.service.sql import StatementState
+                                result = w.statement_execution.get_statement(statement_id)
+                                
+                                if result and result.status.state == StatementState.SUCCEEDED and result.result:
+                                    print(f"DEBUG: Got statement result, extracting data...")
+                                    if hasattr(result.result, 'data_array') and result.result.data_array:
+                                        query_data = result.result.data_array
+                                        print(f"DEBUG: Found query_data from statement: {len(query_data)} rows")
+                                    elif hasattr(result.result, 'rows') and result.result.rows:
+                                        query_data = result.result.rows
+                                        print(f"DEBUG: Found query_data from statement: {len(query_data)} rows")
                             except Exception as e:
-                                print(f"DEBUG: Error getting query result from attachment: {e}")
+                                print(f"DEBUG: Error getting query result from statement: {e}")
                 
                 # Extract answer/content from message details (if not already found)
                 if not genie_response:

@@ -212,29 +212,45 @@ if attachments:
         print()
         
         # Step 5: Get query results
+        # Use statement_id from query attachment to get results via statement execution API
         if attachment_id and conversation_id:
-            print(f"  Step 5: Getting query results for attachment {attachment_id}...")
+            print(f"  Step 5: Getting query results...")
             try:
-                query_result = genie.get_message_query_result(
-                    space_id=GENIE_ROOM_ID,
-                    conversation_id=conversation_id,
-                    message_id=message_id,
-                    attachment_id=attachment_id
-                )
-                print(f"    Query result type: {type(query_result)}")
-                if hasattr(query_result, '__dict__'):
-                    print(f"    Query result attributes: {dir(query_result)}")
-                    for key, value in query_result.__dict__.items():
-                        if isinstance(value, (list, dict)) and len(str(value)) > 200:
-                            print(f"      {key}: {str(value)[:200]}...")
-                        else:
-                            print(f"      {key}: {value}")
-                elif isinstance(query_result, dict):
-                    for key, value in query_result.items():
-                        if isinstance(value, (list, dict)) and len(str(value)) > 200:
-                            print(f"      {key}: {str(value)[:200]}...")
-                        else:
-                            print(f"      {key}: {value}")
+                # Get statement_id from query attachment
+                statement_id = None
+                if hasattr(attachment, 'query') and hasattr(attachment.query, 'statement_id'):
+                    statement_id = attachment.query.statement_id
+                elif isinstance(attachment, dict) and attachment.get('query'):
+                    query_obj = attachment.get('query')
+                    if isinstance(query_obj, dict):
+                        statement_id = query_obj.get('statement_id')
+                    elif hasattr(query_obj, 'statement_id'):
+                        statement_id = query_obj.statement_id
+                
+                if statement_id:
+                    print(f"    Using statement_id: {statement_id}")
+                    # Use statement execution API to get results
+                    from databricks.sdk.service.sql import StatementState
+                    result = w.statement_execution.get_statement(statement_id)
+                    
+                    if result:
+                        print(f"    Statement status: {result.status.state}")
+                        if result.status.state == StatementState.SUCCEEDED and result.result:
+                            print(f"    Result type: {type(result.result)}")
+                            if hasattr(result.result, 'data_array'):
+                                print(f"    Rows returned: {len(result.result.data_array) if result.result.data_array else 0}")
+                                if result.result.data_array:
+                                    print(f"    First few rows:")
+                                    for idx, row in enumerate(result.result.data_array[:5]):
+                                        print(f"      Row {idx + 1}: {row}")
+                            elif hasattr(result.result, 'rows'):
+                                print(f"    Rows returned: {len(result.result.rows) if result.result.rows else 0}")
+                                if result.result.rows:
+                                    print(f"    First few rows:")
+                                    for idx, row in enumerate(result.result.rows[:5]):
+                                        print(f"      Row {idx + 1}: {row}")
+                else:
+                    print(f"    No statement_id found in attachment")
             except Exception as e:
                 print(f"    ✗ Error getting query result: {e}")
                 import traceback
