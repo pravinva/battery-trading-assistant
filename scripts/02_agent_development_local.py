@@ -373,6 +373,7 @@ Question asked: {question}"""
         if conversation_id:
             try:
                 messages = genie.list_conversation_messages(conversation_id=conversation_id)
+                print(f"DEBUG: list_conversation_messages returned: {type(messages)}")
                 if messages:
                     # Handle different response structures
                     msg_list = None
@@ -383,23 +384,26 @@ Question asked: {question}"""
                     elif isinstance(messages, list):
                         msg_list = messages
                     
+                    print(f"DEBUG: Message list type: {type(msg_list)}, length: {len(msg_list) if msg_list else 0}")
+                    
                     if msg_list:
                         # Get ALL messages to find the assistant response
-                        for msg in reversed(msg_list):
+                        for idx, msg in enumerate(reversed(msg_list)):
                             # Look for assistant/genie messages
                             role = getattr(msg, 'role', None) or (isinstance(msg, dict) and msg.get('role'))
                             content = getattr(msg, 'content', None) or (isinstance(msg, dict) and msg.get('content'))
                             
-                            # Debug: print message structure
-                            # print(f"DEBUG: Message role={role}, content={content[:100] if content else None}")
+                            print(f"DEBUG: Message {idx}: role={role}, content_length={len(content) if content else 0}, content_preview={content[:100] if content else None}")
                             
                             # Skip if content is the question itself
                             if content == question:
+                                print(f"DEBUG: Skipping message {idx} - matches question")
                                 continue
                             
                             # Check if it's an assistant response
                             if role and role.lower() in ['assistant', 'genie', 'ai']:
                                 if content and len(content) > len(question) + 10:  # Answer should be longer
+                                    print(f"DEBUG: Found assistant response: {content[:200]}")
                                     genie_response = content
                                     break
                             elif content and len(content) > len(question) + 10:
@@ -407,10 +411,14 @@ Question asked: {question}"""
                                 # Check if it contains numbers or units (likely an answer)
                                 import re
                                 if re.search(r'\d+', content) or 'MWh' in content or 'MW' in content or '$' in content:
+                                    print(f"DEBUG: Found answer-like content: {content[:200]}")
                                     genie_response = content
                                     break
             except Exception as e:
                 # Log error for debugging
+                print(f"DEBUG: Error listing conversation messages: {e}")
+                import traceback
+                traceback.print_exc()
                 pass
         
         # Then try to get message details and query results
@@ -562,6 +570,15 @@ Question asked: {question}"""
         # Prioritize Genie's answer - it contains the actual formatted answer with numbers
         response_parts = []
         
+        # DEBUG: Include raw Genie response for debugging
+        debug_info = []
+        debug_info.append(f"DEBUG: Question: {question}")
+        debug_info.append(f"DEBUG: Message ID: {message_id}")
+        debug_info.append(f"DEBUG: Conversation ID: {conversation_id}")
+        debug_info.append(f"DEBUG: Genie Response (raw): {genie_response}")
+        debug_info.append(f"DEBUG: SQL Query: {sql_query}")
+        debug_info.append(f"DEBUG: Query Data: {str(query_data)[:500] if query_data else 'None'}")
+        
         # Check if we got a valid answer from Genie
         import re
         has_valid_answer = False
@@ -590,7 +607,7 @@ Question asked: {question}"""
             except Exception:
                 pass
         
-        # If we don't have a valid answer, FAIL explicitly
+        # If we don't have a valid answer, FAIL explicitly but include debug info
         if not has_valid_answer and not sql_query:
             error_msg = f"""Genie Error: Could not extract answer from Genie response.
 
@@ -598,6 +615,9 @@ Question: {question}
 Genie Response: {genie_response if genie_response else 'None'}
 Message ID: {message_id if message_id else 'None'}
 Conversation ID: {conversation_id if conversation_id else 'None'}
+
+DEBUG INFO:
+{chr(10).join(debug_info)}
 
 Please check:
 1. Genie space exists and is accessible
@@ -616,6 +636,9 @@ Question: {question}
 SQL Generated: {sql_query[:200]}...
 Genie Response: {genie_response if genie_response else 'None'}
 
+DEBUG INFO:
+{chr(10).join(debug_info)}
+
 Please check the Genie UI for the actual answer. The agent cannot proceed without Genie's answer."""
             raise Exception(error_msg)
         
@@ -627,8 +650,15 @@ Question: {question}
 Genie Response: {genie_response if genie_response else 'None'}
 Query Data: {str(query_data)[:200] if query_data else 'None'}
 
+DEBUG INFO:
+{chr(10).join(debug_info)}
+
 The agent cannot proceed without Genie's answer."""
             raise Exception(error_msg)
+        
+        # Add debug info to response (will be shown in expander)
+        if debug_info:
+            response_parts.append(f"\n\n---\n**DEBUG INFO (Raw Genie Response):**\n```\n{chr(10).join(debug_info)}\n```")
         
         # Then add SQL query if available
         if sql_query:
