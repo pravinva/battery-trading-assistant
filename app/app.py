@@ -24,6 +24,8 @@ def load_agent():
     AGENT_ERROR = None
     agent = None
     SYSTEM_PROMPT = None
+    INDEX_NAME = None
+    GENIE_ROOM_ID = None
     
     try:
         agent_script_path = Path(__file__).parent.parent / "scripts" / "02_agent_development_local.py"
@@ -33,6 +35,9 @@ def load_agent():
             spec.loader.exec_module(agent_module)
             agent = agent_module.agent
             SYSTEM_PROMPT = agent_module.SYSTEM_PROMPT
+            # Get configuration values
+            INDEX_NAME = getattr(agent_module, 'INDEX_NAME', None)
+            GENIE_ROOM_ID = getattr(agent_module, 'GENIE_ROOM_ID', None) or os.environ.get("GENIE_ROOM_ID", None)
             AGENT_AVAILABLE = True
         else:
             AGENT_ERROR = f"Agent script not found at {agent_script_path}"
@@ -40,10 +45,10 @@ def load_agent():
         AGENT_AVAILABLE = False
         AGENT_ERROR = str(e)
     
-    return AGENT_AVAILABLE, agent, SYSTEM_PROMPT, AGENT_ERROR
+    return AGENT_AVAILABLE, agent, SYSTEM_PROMPT, AGENT_ERROR, INDEX_NAME, GENIE_ROOM_ID
 
 # Load agent (cached)
-AGENT_AVAILABLE, agent, SYSTEM_PROMPT, AGENT_ERROR = load_agent()
+AGENT_AVAILABLE, agent, SYSTEM_PROMPT, AGENT_ERROR, INDEX_NAME, GENIE_ROOM_ID = load_agent()
 
 # Page config
 st.set_page_config(
@@ -292,10 +297,21 @@ with col1:
         st.markdown("### 🔋")
 
 with col2:
-    st.markdown("""
+    # Build subtitle with Genie room and Vector Index info
+    subtitle_parts = ["AI-powered insights for battery operations and trading"]
+    
+    if INDEX_NAME:
+        subtitle_parts.append(f"Vector Index: <code style='background: rgba(255,255,255,0.2); padding: 2px 6px; border-radius: 3px;'>{INDEX_NAME}</code>")
+    
+    if GENIE_ROOM_ID:
+        subtitle_parts.append(f"Genie Room: <code style='background: rgba(255,255,255,0.2); padding: 2px 6px; border-radius: 3px;'>{GENIE_ROOM_ID}</code>")
+    
+    subtitle_html = " | ".join(subtitle_parts)
+    
+    st.markdown(f"""
     <div class="header-container">
         <h1 class="header-title">Battery Trading Assistant</h1>
-        <p class="header-subtitle">AI-powered insights for battery operations and trading</p>
+        <p class="header-subtitle">{subtitle_html}</p>
     </div>
     """, unsafe_allow_html=True)
     
