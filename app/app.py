@@ -11,9 +11,10 @@ os.environ["PYTHONWARNINGS"] = "ignore"
 # Add parent directory to path to import agent
 sys.path.append(str(Path(__file__).parent.parent))
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 import importlib.util
 from pathlib import Path
+import json
 
 # Cache agent initialization to avoid reloading on every page refresh
 @st.cache_resource
@@ -272,10 +273,95 @@ with st.sidebar:
 # Main chat interface
 st.markdown("### 💬 Chat with Assistant")
 
+def extract_sources(response_messages):
+    """Extract tool calls and results from agent response"""
+    sources = {
+        "vector_search": [],
+        "sql_queries": [],
+        "tools_used": []
+    }
+    
+    # Track tool calls and their results
+    tool_calls_map = {}
+    
+    for msg in response_messages:
+        # Check for tool calls (AIMessage with tool_calls)
+        if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
+            for tool_call in msg.tool_calls:
+                tool_call_id = tool_call.get('id') or tool_call.get('name')
+                if tool_call_id:
+                    tool_calls_map[tool_call_id] = {
+                        'name': tool_call.get('name', ''),
+                        'args': tool_call.get('args', {})
+                    }
+        
+        # Check for tool results (ToolMessage)
+        if isinstance(msg, ToolMessage):
+            # ToolMessage has tool_call_id attribute
+            tool_call_id = getattr(msg, 'tool_call_id', None) or getattr(msg, 'name', None)
+            if tool_call_id and tool_call_id in tool_calls_map:
+                tool_info = tool_calls_map[tool_call_id]
+                tool_name = tool_info['name']
+                
+                # Categorize tools
+                if tool_name == 'search_battery_docs':
+                    sources["tools_used"].append("Vector Search")
+                    sources["vector_search"].append({
+                        "query": tool_info['args'].get('query', ''),
+                        "result": msg.content
+                    })
+                elif tool_name in ['get_battery_status', 'get_battery_revenue', 'get_battery_info']:
+                    sources["tools_used"].append("SQL Query")
+                    sources["sql_queries"].append({
+                        "tool": tool_name,
+                        "args": tool_info['args'],
+                        "result": msg.content
+                    })
+            # Also try to match by tool name if ID matching fails
+            elif hasattr(msg, 'name'):
+                tool_name = msg.name
+                if tool_name == 'search_battery_docs':
+                    sources["tools_used"].append("Vector Search")
+                    sources["vector_search"].append({
+                        "query": "Unknown query",
+                        "result": msg.content
+                    })
+                elif tool_name in ['get_battery_status', 'get_battery_revenue', 'get_battery_info']:
+                    sources["tools_used"].append("SQL Query")
+                    sources["sql_queries"].append({
+                        "tool": tool_name,
+                        "args": {},
+                        "result": msg.content
+                    })
+    
+    return sources
+
 # Display chat history using Streamlit's chat components
-for message in st.session_state.messages:
+for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        
+        # Display sources if available
+        if message["role"] == "assistant" and "sources" in message:
+            sources = message["sources"]
+            if sources["tools_used"]:
+                st.markdown("---")
+                tools_used_str = ", ".join(set(sources["tools_used"]))
+                st.caption(f"📊 **Sources:** {tools_used_str}")
+                
+                # Show expanders for detailed results
+                if sources["vector_search"]:
+                    with st.expander("🔍 Vector Search Results", expanded=False):
+                        for vs_idx, vs_result in enumerate(sources["vector_search"], 1):
+                            st.markdown(f"**Query {vs_idx}:** {vs_result['query']}")
+                            st.text_area("Result:", vs_result['result'], height=150, key=f"hist_vs_{idx}_{vs_idx}", label_visibility="collapsed")
+                
+                if sources["sql_queries"]:
+                    with st.expander("💾 SQL Query Results", expanded=False):
+                        for sql_idx, sql_result in enumerate(sources["sql_queries"], 1):
+                            st.markdown(f"**Tool:** `{sql_result['tool']}`")
+                            st.markdown(f"**Arguments:** `{json.dumps(sql_result['args'], indent=2)}`")
+                            st.text_area("Result:", sql_result['result'], height=150, key=f"hist_sql_{idx}_{sql_idx}", label_visibility="collapsed")
 
 # Process pending query from sidebar (non-blocking)
 if "pending_query" in st.session_state and st.session_state.pending_query:
@@ -299,14 +385,38 @@ if "pending_query" in st.session_state and st.session_state.pending_query:
                     ]
                 })
                 
+                # Extract sources
+                sources = extract_sources(response["messages"])
+                
                 # Get assistant response
                 assistant_response = response["messages"][-1].content
                 st.markdown(assistant_response)
                 
-                # Add to session state
+                # Display sources
+                if sources["tools_used"]:
+                    st.markdown("---")
+                    tools_used_str = ", ".join(set(sources["tools_used"]))
+                    st.caption(f"📊 **Sources:** {tools_used_str}")
+                    
+                    # Show expanders for detailed results
+                    if sources["vector_search"]:
+                        with st.expander("🔍 Vector Search Results", expanded=False):
+                            for idx, vs_result in enumerate(sources["vector_search"], 1):
+                                st.markdown(f"**Query {idx}:** {vs_result['query']}")
+                                st.text_area("Result:", vs_result['result'], height=150, key=f"vs_{idx}", label_visibility="collapsed")
+                    
+                    if sources["sql_queries"]:
+                        with st.expander("💾 SQL Query Results", expanded=False):
+                            for idx, sql_result in enumerate(sources["sql_queries"], 1):
+                                st.markdown(f"**Tool:** `{sql_result['tool']}`")
+                                st.markdown(f"**Arguments:** `{json.dumps(sql_result['args'], indent=2)}`")
+                                st.text_area("Result:", sql_result['result'], height=150, key=f"sql_{idx}", label_visibility="collapsed")
+                
+                # Add to session state with sources
                 st.session_state.messages.append({
                     "role": "assistant",
-                    "content": assistant_response
+                    "content": assistant_response,
+                    "sources": sources
                 })
                 
             except Exception as e:
@@ -337,14 +447,38 @@ if AGENT_AVAILABLE:
                         ]
                     })
                     
+                    # Extract sources
+                    sources = extract_sources(response["messages"])
+                    
                     # Get assistant response
                     assistant_response = response["messages"][-1].content
                     st.markdown(assistant_response)
                     
-                    # Add to session state
+                    # Display sources
+                    if sources["tools_used"]:
+                        st.markdown("---")
+                        tools_used_str = ", ".join(set(sources["tools_used"]))
+                        st.caption(f"📊 **Sources:** {tools_used_str}")
+                        
+                        # Show expanders for detailed results
+                        if sources["vector_search"]:
+                            with st.expander("🔍 Vector Search Results", expanded=False):
+                                for idx, vs_result in enumerate(sources["vector_search"], 1):
+                                    st.markdown(f"**Query {idx}:** {vs_result['query']}")
+                                    st.text_area("Result:", vs_result['result'], height=150, key=f"chat_vs_{idx}", label_visibility="collapsed")
+                        
+                        if sources["sql_queries"]:
+                            with st.expander("💾 SQL Query Results", expanded=False):
+                                for idx, sql_result in enumerate(sources["sql_queries"], 1):
+                                    st.markdown(f"**Tool:** `{sql_result['tool']}`")
+                                    st.markdown(f"**Arguments:** `{json.dumps(sql_result['args'], indent=2)}`")
+                                    st.text_area("Result:", sql_result['result'], height=150, key=f"chat_sql_{idx}", label_visibility="collapsed")
+                    
+                    # Add to session state with sources
                     st.session_state.messages.append({
                         "role": "assistant",
-                        "content": assistant_response
+                        "content": assistant_response,
+                        "sources": sources
                     })
                     
                 except Exception as e:
