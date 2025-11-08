@@ -301,18 +301,33 @@ To use Genie:
 Question asked: {question}"""
         
         # Use Genie Conversation API
-        # Start a conversation in the space and send a message
+        # Start a conversation in the space with the question as content
         genie = w.genie
         
-        # Start a conversation in the space
-        conversation = genie.start_conversation(space_id=GENIE_ROOM_ID)
-        conversation_id = conversation.conversation_id
-        
-        # Send message to Genie
-        message = genie.create_message_and_wait(
-            conversation_id=conversation_id,
+        # Start a conversation with content (the question)
+        conversation = genie.start_conversation(
+            space_id=GENIE_ROOM_ID,
             content=question
         )
+        conversation_id = conversation.conversation_id
+        
+        # Get the message from the conversation response
+        # The response should be in the conversation object
+        message = None
+        if hasattr(conversation, 'message'):
+            message = conversation.message
+        elif hasattr(conversation, 'messages') and conversation.messages:
+            message = conversation.messages[-1]
+        else:
+            # If message not in conversation, try to get it via create_message_and_wait
+            try:
+                message = genie.create_message_and_wait(
+                    conversation_id=conversation_id,
+                    content=question
+                )
+            except Exception:
+                # Fallback: use the conversation object itself
+                message = conversation
         
         # Try to extract SQL query from Genie response
         sql_query = None
