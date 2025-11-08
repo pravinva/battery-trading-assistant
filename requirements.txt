@@ -1,0 +1,30 @@
+# Core Databricks dependencies
+databricks-cli>=0.18.0
+databricks-sdk>=0.20.0
+databricks-vectorsearch>=0.1.0
+databricks-agents>=0.1.0
+
+# MLflow and ML
+mlflow>=2.10.0
+pyspark>=3.5.0
+
+# LangChain and LangGraph
+langchain>=0.1.0
+langchain-community>=0.0.20
+langchain-core>=0.1.0
+langgraph>=0.0.20
+langchain-text-splitters>=0.0.1
+
+# PDF processing
+pypdf>=3.17.0
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Streamlit (for app)
+streamlit>=1.28.0
+
+# Utilities
+python-dotenv>=1.0.0
+
