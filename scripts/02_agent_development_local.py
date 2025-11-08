@@ -343,17 +343,21 @@ Question asked: {question}"""
             conversation_id = message.get('conversation_id')
         
         # Poll for message status following Genie API best practices
-        # Poll every 1-5 seconds with exponential backoff, max 10 minutes
+        # Poll every 1-5 seconds with exponential backoff, max 2 minutes for UI responsiveness
         import time
-        max_poll_time = 600  # 10 minutes max
+        max_poll_time = 120  # 2 minutes max (reduced for UI responsiveness)
         poll_interval = 2  # Start with 2 seconds
-        max_poll_interval = 60  # Max 1 minute between polls
+        max_poll_interval = 10  # Max 10 seconds between polls (reduced from 60)
         start_time = time.time()
         
         if message_id and GENIE_ROOM_ID:
             message_status = None
+            message_details = None
+            poll_count = 0
+            
             while time.time() - start_time < max_poll_time:
                 try:
+                    poll_count += 1
                     # Get message status
                     message_details = genie.get_message(space_id=GENIE_ROOM_ID, message_id=message_id)
                     
@@ -363,7 +367,8 @@ Question asked: {question}"""
                     elif isinstance(message_details, dict):
                         message_status = message_details.get('status')
                     
-                    print(f"DEBUG: Message status: {message_status}")
+                    elapsed = int(time.time() - start_time)
+                    print(f"DEBUG: Poll #{poll_count} [{elapsed}s] Status: {message_status}")
                     
                     # Check if message is in a conclusive state
                     if message_status in ['COMPLETED', 'FAILED', 'CANCELLED']:
@@ -372,19 +377,27 @@ Question asked: {question}"""
                         break
                     
                     # Wait before next poll with exponential backoff
-                    time.sleep(min(poll_interval, max_poll_interval))
+                    wait_time = min(poll_interval, max_poll_interval)
+                    print(f"DEBUG: Waiting {wait_time}s before next poll...")
+                    time.sleep(wait_time)
                     poll_interval = min(poll_interval * 1.5, max_poll_interval)  # Exponential backoff
                     
                 except Exception as e:
                     print(f"DEBUG: Error polling message status: {e}")
                     # Continue polling on error
-                    time.sleep(min(poll_interval, max_poll_interval))
+                    wait_time = min(poll_interval, max_poll_interval)
+                    time.sleep(wait_time)
                     poll_interval = min(poll_interval * 1.5, max_poll_interval)
             
             if message_status not in ['COMPLETED', 'FAILED', 'CANCELLED']:
-                print(f"DEBUG: Polling timeout after {max_poll_time} seconds, status: {message_status}")
+                elapsed = int(time.time() - start_time)
+                print(f"DEBUG: Polling timeout after {elapsed} seconds, status: {message_status}")
+                # Use the last message_details we got, even if not completed
+                if message_details:
+                    message = message_details
         else:
             # If no message_id, wait a bit
+            print("DEBUG: No message_id, waiting 5 seconds...")
             time.sleep(5)
         
         # Try to get the full message details including SQL and results
