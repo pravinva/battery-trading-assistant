@@ -425,10 +425,8 @@ if __name__ == "__main__":
     print("\n" + "=" * 80)
     print("AGENT DEVELOPMENT COMPLETE")
     print("=" * 80)
-    if run_id:
-        print(f"\n✅ Agent logged to MLflow: runs:/{run_id}/agent")
-    else:
-        print(f"\n✅ Agent created successfully (MLflow logging skipped)")
+    print(f"\n✅ Agent created successfully")
+    print(f"   (MLflow logging running in background - non-blocking)")
     print(f"\n📊 Agent Summary:")
     print(f"   ✅ 4 tools created and tested")
     print(f"   ✅ LLM: {LLM_ENDPOINT}")
