@@ -291,6 +291,7 @@ def query_genie(
     # Initialize debug log
     debug_log_path = "/tmp/genie_debug.log"
     import json
+    import time
     try:
         with open(debug_log_path, "a") as f:
             f.write(f"\n{'='*80}\n")
@@ -304,6 +305,8 @@ def query_genie(
         print(f"DEBUG: Logging to {debug_log_path}")
     except Exception as e:
         print(f"DEBUG: Error initializing debug log: {e}")
+        import traceback
+        traceback.print_exc()
     
     try:
         if not GENIE_ROOM_ID:
