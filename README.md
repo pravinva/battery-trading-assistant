@@ -885,12 +885,66 @@ Following [Databricks Genie API best practices](https://docs.databricks.com/aws/
 3. Expand evaluation dataset in notebook 03
 4. Customize Streamlit UI in `app/app.py`
 
+## Future Architecture: Multi-Agent Supervisor Pattern
+
+The current implementation uses a **single agent with multiple tools**. For future scalability and advanced use cases, we plan to migrate to a **Multi-Agent Supervisor pattern** using `databricks-ai-bridge`.
+
+### Why Multi-Agent Supervisor?
+
+**Current Limitations:**
+- Single LLM makes all tool selection decisions
+- Tools execute sequentially
+- Limited scalability for complex multi-step queries
+- Difficult to add specialized domain expertise
+
+**Future Benefits:**
+- **Specialized Agents**: Each agent becomes an expert in its domain (Data, Docs, Analytics, Alerts)
+- **Parallel Processing**: Multiple agents work simultaneously for faster responses
+- **Better Coordination**: Supervisor orchestrates complex multi-step workflows
+- **Easy Expansion**: Add new specialized agents without refactoring existing code
+- **Better Error Handling**: If one agent fails, others can still provide value
+
+### Planned Architecture
+
+```
+Supervisor Agent (Router)
+    ├── Data Agent (Genie Expert) → SQL queries, charts, data analysis
+    ├── Docs Agent (Vector Search) → Technical documentation, processes
+    ├── Analytics Agent (Future) → Forecasting, trends, predictions
+    └── Alert Agent (Future) → Monitoring, anomalies, thresholds
+```
+
+### Implementation Path
+
+1. **Phase 1** (Current): Single agent with tools ✅
+2. **Phase 2** (Next): Add `databricks-langchain` integration
+3. **Phase 3** (Future): Implement Multi-Agent Supervisor
+4. **Phase 4** (Future): Add specialized agents (Analytics, Alerts)
+
+See `docs/MULTI_AGENT_SUPERVISOR_PLAN.md` for detailed architecture and migration plan.
+
+### Databricks AI Bridge Integration
+
+The `databricks-ai-bridge` library provides:
+- **LangChain-native integration** for Genie and Vector Search
+- **Multi-Agent Supervisor** pattern implementation
+- **Unified API** for all Databricks AI features
+- **Simplified code** with higher-level abstractions
+
+**Benefits:**
+- Native LangChain/LangGraph integration
+- Built-in Multi-Agent Supervisor support
+- Consistent API patterns across Databricks AI features
+- Future-proof architecture aligned with Databricks roadmap
+
 ## References
 
 - [Databricks Mosaic AI Agent Framework](https://docs.databricks.com/en/generative-ai/tutorials/agent-framework-notebook)
 - [Vector Search Documentation](https://docs.databricks.com/en/vector-search/index.html)
 - [Model Serving Documentation](https://docs.databricks.com/en/machine-learning/model-serving/index.html)
 - [Databricks Apps Documentation](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html)
+- [Databricks AI Bridge](https://github.com/databricks/databricks-ai-bridge) - Multi-Agent Supervisor and LangChain integrations
+- [Multi-Agent Supervisor Documentation](https://docs.databricks.com/aws/en/generative-ai/agent-bricks/multi-agent-supervisor)
 
 ## License
 
