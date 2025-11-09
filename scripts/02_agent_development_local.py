@@ -1558,15 +1558,22 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
             pass
     
     # Fallback: Extract from message object directly
+    # IMPORTANT: Don't use message.content as fallback - it's usually just the question
+    # Only use it if we have no attachments AND it's clearly different from the question
     if not genie_response:
+        candidate_content = None
         if hasattr(message, 'content'):
-            genie_response = message.content
+            candidate_content = message.content
         elif hasattr(message, 'answer'):
-            genie_response = message.answer
+            candidate_content = message.answer
         elif hasattr(message, 'text'):
-            genie_response = message.text
+            candidate_content = message.text
         elif isinstance(message, dict):
-            genie_response = message.get('content') or message.get('answer') or message.get('text')
+            candidate_content = message.get('content') or message.get('answer') or message.get('text')
+        
+        # Only use if it's clearly different from the question (not just an echo)
+        if candidate_content and candidate_content != question and len(candidate_content) > len(question) + 10:
+            genie_response = candidate_content
         
     # Fallback: Try old method if attachments didn't work
     if not genie_response or not sql_query:
