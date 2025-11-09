@@ -47,6 +47,13 @@ def load_agent(_file_mtime, _force_reload=False):
                 if mod in sys.modules:
                     del sys.modules[mod]
             
+            # Set USE_GENIE_MCP environment variable before loading module
+            # This ensures the agent module uses the correct MCP setting
+            if 'use_genie_mcp' in st.session_state:
+                os.environ["USE_GENIE_MCP"] = "true" if st.session_state.use_genie_mcp else "false"
+            elif "USE_GENIE_MCP" not in os.environ:
+                os.environ["USE_GENIE_MCP"] = "false"
+            
             spec = importlib.util.spec_from_file_location(module_name, agent_script_path)
             agent_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(agent_module)
@@ -415,6 +422,36 @@ with st.sidebar:
         </div>
         """, unsafe_allow_html=True)
         st.error(f"Agent not available: {AGENT_ERROR}")
+    
+    st.markdown("---")
+    
+    # Genie MCP Toggle
+    st.markdown("### 🔌 Configuration")
+    
+    # Initialize session state for MCP toggle if not exists
+    if 'use_genie_mcp' not in st.session_state:
+        st.session_state.use_genie_mcp = os.environ.get("USE_GENIE_MCP", "false").lower() == "true"
+    
+    # Toggle button for Genie MCP
+    use_mcp = st.toggle(
+        "Use Genie MCP Server",
+        value=st.session_state.use_genie_mcp,
+        help="Enable to use Genie via Model Context Protocol (MCP) instead of direct API. Requires databricks-mcp package."
+    )
+    
+    # Update session state and environment variable
+    if use_mcp != st.session_state.use_genie_mcp:
+        st.session_state.use_genie_mcp = use_mcp
+        os.environ["USE_GENIE_MCP"] = "true" if use_mcp else "false"
+        # Clear agent cache to reload with new setting
+        load_agent.clear()
+        st.rerun()
+    
+    # Show current MCP status
+    if use_mcp:
+        st.success("✅ Genie MCP enabled")
+    else:
+        st.info("ℹ️ Using direct Genie API")
     
     st.markdown("---")
     
