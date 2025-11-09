@@ -919,7 +919,7 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
         
         # Call the tool
         add_genie_log(f"📞 Calling MCP tool: {genie_tool.name}")
-        add_genie_log(f"📋 Tool arguments: {json.dumps(tool_args, indent=2)}")
+        add_genie_log(f"📋 Tool arguments: {str(tool_args)}")
         result = _mcp_client.call_tool(genie_tool.name, tool_args)
         add_genie_log(f"✅ MCP tool call successful")
         
@@ -939,12 +939,6 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
             if content_list and len(content_list) > 0:
                 # Get first text content
                 first_content = content_list[0]
-                if hasattr(first_content, 'text'):
-                    content_text = first_content.text
-                    if DEBUG_MODE:
-                        print(f"DEBUG: Content text type: {type(content_text)}")
-                        print(f"DEBUG: Content text preview: {content_text[:200]}")
-                    
                 if hasattr(first_content, 'text'):
                     content_text = first_content.text
                     if DEBUG_MODE:
@@ -1105,7 +1099,6 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
                     if hasattr(poll_result, 'content') and poll_result.content:
                         poll_content = poll_result.content[0]
                         if hasattr(poll_content, 'text'):
-                            import json
                             try:
                                 parsed = json.loads(poll_content.text)
                                 genie_response = parsed.get("content") or parsed.get("answer") or parsed.get("response")
@@ -1141,7 +1134,6 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
         
         # Embed chart if created
         if chart_data:
-            import json
             chart_marker = f"\n\n[PLOTLY_CHART_START]\n{json.dumps(chart_data)}\n[PLOTLY_CHART_END]\n"
             response += chart_marker
         
