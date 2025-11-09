@@ -1,56 +1,18 @@
-"""
-Base Agent Class for Multi-Agent Supervisor Pattern
+# Multi-Agent Supervisor Implementation
+# 
+# This package contains specialized agents for the Multi-Agent Supervisor pattern.
+#
+# Structure:
+# - base_agent.py: Base class for all agents
+# - supervisor.py: Supervisor agent that routes queries
+# - data_agent.py: Data/Genie agent
+# - docs_agent.py: Documentation/Vector Search agent
+#
+# See docs/MULTI_AGENT_SUPERVISOR_PLAN.md for architecture details.
 
-This module provides a base class for specialized agents in the Multi-Agent Supervisor architecture.
-"""
+from .base_agent import BaseAgent
+from .supervisor import SupervisorAgent
+from .data_agent import DataAgent
+from .docs_agent import DocsAgent
 
-from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
-from langchain_core.messages import BaseMessage
-
-
-class BaseAgent(ABC):
-    """Base class for specialized agents in the Multi-Agent Supervisor pattern"""
-    
-    def __init__(self, name: str, description: str):
-        """
-        Initialize base agent
-        
-        Args:
-            name: Agent name (e.g., "data_agent", "docs_agent")
-            description: Agent description for routing decisions
-        """
-        self.name = name
-        self.description = description
-    
-    @abstractmethod
-    def can_handle(self, question: str) -> bool:
-        """
-        Determine if this agent can handle the given question
-        
-        Args:
-            question: User question
-            
-        Returns:
-            True if agent can handle, False otherwise
-        """
-        pass
-    
-    @abstractmethod
-    def process(self, question: str, context: Optional[Dict[str, Any]] = None) -> str:
-        """
-        Process the question and return response
-        
-        Args:
-            question: User question
-            context: Optional context from previous interactions
-            
-        Returns:
-            Agent response
-        """
-        pass
-    
-    def get_description(self) -> str:
-        """Get agent description for routing"""
-        return self.description
-
+__all__ = ['BaseAgent', 'SupervisorAgent', 'DataAgent', 'DocsAgent']

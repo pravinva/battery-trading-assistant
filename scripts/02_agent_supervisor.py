@@ -2,7 +2,7 @@
 """
 Battery Trading Agent - Multi-Agent Supervisor Implementation
 
-This is the future architecture using Multi-Agent Supervisor pattern from databricks-ai-bridge.
+This is the future architecture using Multi-Agent Supervisor pattern.
 It will coexist with the current single-agent implementation for gradual migration.
 
 Architecture:
@@ -20,6 +20,16 @@ warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 os.environ["PYTHONWARNINGS"] = "ignore"
 
+import sys
+from pathlib import Path
+
+# Add parent directory to path
+sys.path.append(str(Path(__file__).parent.parent))
+
+from agents.supervisor import SupervisorAgent
+from agents.data_agent import DataAgent
+from agents.docs_agent import DocsAgent
+
 # Configuration
 CATALOG = "ea_trading"
 SCHEMA = "battery_trading"
@@ -34,12 +44,34 @@ print("=" * 80)
 print("Multi-Agent Supervisor Implementation")
 print("=" * 80)
 print()
-print("This is a work-in-progress implementation.")
-print("See docs/MULTI_AGENT_SUPERVISOR_PLAN.md for architecture details.")
+
+# Initialize specialized agents
+print("🔧 Initializing specialized agents...")
+data_agent = DataAgent(genie_room_id=GENIE_ROOM_ID)
+docs_agent = DocsAgent(index_name=INDEX_NAME, endpoint_name=ENDPOINT_NAME)
+print("✅ Data Agent initialized")
+print("✅ Docs Agent initialized")
+
+# Initialize supervisor
+print("\n🔧 Initializing Supervisor Agent...")
+supervisor = SupervisorAgent(data_agent=data_agent, docs_agent=docs_agent)
+print("✅ Supervisor Agent initialized")
+
+print("\n" + "=" * 80)
+print("Multi-Agent Supervisor Ready!")
+print("=" * 80)
 print()
-print("Status: Initial structure created - ready for implementation")
+print("Agents available:")
+print(f"  - {data_agent.name}: {data_agent.description}")
+print(f"  - {docs_agent.name}: {docs_agent.description}")
+print(f"  - {supervisor.name}: {supervisor.description}")
+print()
+print("Usage:")
+print("  response = supervisor.process('What is the current SoC for RESS2?')")
+print("  logs = supervisor.get_logs()")
 print("=" * 80)
 
-# TODO: Implement Multi-Agent Supervisor using databricks-ai-bridge
-# See docs/MULTI_AGENT_SUPERVISOR_PLAN.md for detailed plan
+# Export for use in other modules
+__all__ = ['supervisor', 'data_agent', 'docs_agent', 'SupervisorAgent', 'DataAgent', 'DocsAgent']
+
 

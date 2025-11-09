@@ -6,7 +6,6 @@ This module provides a base class for specialized agents in the Multi-Agent Supe
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
-from langchain_core.messages import BaseMessage
 
 
 class BaseAgent(ABC):
