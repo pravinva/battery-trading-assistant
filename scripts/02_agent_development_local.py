@@ -599,9 +599,10 @@ Question asked: {question}"""
                     traceback.print_exc()
                 
                 # Extract response from attachments (per Genie API docs)
+                # IMPORTANT: Genie's answer is NOT in content field - it's in query results or description
                 if attachments:
                     for attachment in attachments:
-                        # Extract text response
+                        # Extract text response (usually None for query attachments)
                         if hasattr(attachment, 'text'):
                             candidate_text = attachment.text
                         elif isinstance(attachment, dict):
@@ -613,6 +614,25 @@ Question asked: {question}"""
                             print(f"DEBUG: Found text in attachment: {candidate_text[:200]}")
                             if not genie_response:
                                 genie_response = candidate_text
+                        
+                        # Extract description from query attachment - this might contain Genie's explanation
+                        if hasattr(attachment, 'query'):
+                            query_obj = attachment.query
+                            if hasattr(query_obj, 'description'):
+                                description = query_obj.description
+                                print(f"DEBUG: Found query description: {description[:200] if description else None}")
+                                # Description explains what Genie is doing, but might not be the full answer
+                                # Use it if we don't have anything else
+                                if description and description != question and len(description) > len(question) + 10:
+                                    if not genie_response:
+                                        genie_response = description
+                                        print(f"DEBUG: Using query description as genie_response")
+                            elif isinstance(query_obj, dict):
+                                description = query_obj.get('description')
+                                if description and description != question and len(description) > len(question) + 10:
+                                    if not genie_response:
+                                        genie_response = description
+                                        print(f"DEBUG: Using query description from dict as genie_response")
                         
                         # Extract SQL query from attachment
                         # Query is a GenieQueryAttachment object, extract the actual query string
