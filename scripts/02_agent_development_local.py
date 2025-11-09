@@ -288,6 +288,23 @@ def query_genie(
     
     Returns Genie's response with query results."""
     
+    # Initialize debug log
+    debug_log_path = "/tmp/genie_debug.log"
+    import json
+    try:
+        with open(debug_log_path, "a") as f:
+            f.write(f"\n{'='*80}\n")
+            f.write(f"NEW QUERY_GENIE CALL\n")
+            f.write(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Question: {question}\n")
+            f.write(f"{'='*80}\n")
+            f.flush()
+        print(f"\n{'='*80}")
+        print(f"DEBUG: query_genie called with question: {question}")
+        print(f"DEBUG: Logging to {debug_log_path}")
+    except Exception as e:
+        print(f"DEBUG: Error initializing debug log: {e}")
+    
     try:
         if not GENIE_ROOM_ID:
             return f"""Genie space ID not configured. 
