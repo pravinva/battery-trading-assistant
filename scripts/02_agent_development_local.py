@@ -487,23 +487,47 @@ Question asked: {question}"""
                 print(f"DEBUG: get_message returned: {type(message_details)}")
                 print(f"DEBUG: message_details attributes: {dir(message_details) if hasattr(message_details, '__dict__') else 'N/A'}")
                 
-                # Write full message_details to debug log
+                # Write full message_details to debug log AND console
+                debug_log_path = "/tmp/genie_debug.log"
+                import json
                 try:
-                    import json
-                    debug_log_path = "/tmp/genie_debug.log"
+                    print(f"\n{'='*80}")
+                    print(f"DEBUG: Writing to {debug_log_path}")
+                    print(f"Question: {question}")
+                    print(f"Message ID: {message_id}")
+                    print(f"Conversation ID: {conversation_id}")
+                    print(f"Message Details Type: {type(message_details)}")
+                    
                     with open(debug_log_path, "a") as f:
                         f.write(f"\n{'='*80}\n")
                         f.write(f"Question: {question}\n")
                         f.write(f"Message ID: {message_id}\n")
                         f.write(f"Conversation ID: {conversation_id}\n")
                         f.write(f"Message Details Type: {type(message_details)}\n")
+                        
+                        # Try multiple methods to serialize
                         if hasattr(message_details, '__dict__'):
-                            f.write(f"Message Details __dict__:\n{json.dumps({k: str(v)[:500] for k, v in message_details.__dict__.items()}, indent=2)}\n")
+                            msg_dict = {k: str(v)[:1000] for k, v in message_details.__dict__.items()}
+                            msg_json = json.dumps(msg_dict, indent=2, default=str)
+                            print(f"Message Details __dict__ keys: {list(msg_dict.keys())}")
+                            f.write(f"Message Details __dict__:\n{msg_json}\n")
                         elif hasattr(message_details, 'as_dict'):
-                            f.write(f"Message Details (as_dict):\n{json.dumps(message_details.as_dict(), indent=2, default=str)}\n")
+                            msg_dict = message_details.as_dict()
+                            msg_json = json.dumps(msg_dict, indent=2, default=str)
+                            print(f"Message Details (as_dict) keys: {list(msg_dict.keys()) if isinstance(msg_dict, dict) else 'N/A'}")
+                            f.write(f"Message Details (as_dict):\n{msg_json}\n")
+                        else:
+                            msg_str = str(message_details)[:2000]
+                            print(f"Message Details (str): {msg_str[:200]}...")
+                            f.write(f"Message Details (str):\n{msg_str}\n")
+                        
                         f.write(f"{'='*80}\n")
+                        f.flush()  # Force write
+                    print(f"DEBUG: Successfully wrote to {debug_log_path}")
                 except Exception as e:
                     print(f"DEBUG: Error writing to debug log: {e}")
+                    import traceback
+                    traceback.print_exc()
                 
                 # Extract attachments array (contains Genie's response when COMPLETED)
                 attachments = None
@@ -515,26 +539,44 @@ Question asked: {question}"""
                 print(f"DEBUG: Attachments: {attachments}")
                 print(f"DEBUG: Number of attachments: {len(attachments) if attachments else 0}")
                 
-                # Log attachments to debug file
+                # Log attachments to debug file AND console
                 try:
-                    import json
+                    print(f"\nDEBUG: Logging attachments to {debug_log_path}")
+                    print(f"Number of attachments: {len(attachments) if attachments else 0}")
+                    
                     with open(debug_log_path, "a") as f:
                         f.write(f"\nAttachments:\n")
                         if attachments:
                             for idx, att in enumerate(attachments):
+                                print(f"  Processing attachment {idx + 1}...")
                                 f.write(f"  Attachment {idx + 1}:\n")
                                 if hasattr(att, '__dict__'):
+                                    att_dict = {k: str(v)[:1000] for k, v in att.__dict__.items()}
+                                    att_json = json.dumps(att_dict, indent=4, default=str)
+                                    print(f"    Type: {type(att)}")
+                                    print(f"    Keys: {list(att_dict.keys())}")
                                     f.write(f"    Type: {type(att)}\n")
-                                    f.write(f"    __dict__: {json.dumps({k: str(v)[:500] for k, v in att.__dict__.items()}, indent=4, default=str)}\n")
+                                    f.write(f"    __dict__:\n{att_json}\n")
                                 elif hasattr(att, 'as_dict'):
-                                    f.write(f"    as_dict: {json.dumps(att.as_dict(), indent=4, default=str)}\n")
+                                    att_dict = att.as_dict()
+                                    att_json = json.dumps(att_dict, indent=4, default=str)
+                                    print(f"    Type: {type(att)}")
+                                    print(f"    Keys: {list(att_dict.keys()) if isinstance(att_dict, dict) else 'N/A'}")
+                                    f.write(f"    as_dict:\n{att_json}\n")
                                 else:
-                                    f.write(f"    Value: {str(att)[:500]}\n")
+                                    att_str = str(att)[:1000]
+                                    print(f"    Value: {att_str[:200]}...")
+                                    f.write(f"    Value: {att_str}\n")
                         else:
+                            print("  No attachments found")
                             f.write("  No attachments\n")
                         f.write(f"{'='*80}\n")
+                        f.flush()  # Force write
+                    print(f"DEBUG: Successfully logged attachments to {debug_log_path}")
                 except Exception as e:
                     print(f"DEBUG: Error logging attachments: {e}")
+                    import traceback
+                    traceback.print_exc()
                 
                 # Extract response from attachments (per Genie API docs)
                 if attachments:
