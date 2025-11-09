@@ -295,14 +295,18 @@ def query_genie(
     import sys
     
     # Write immediately with force flush
-    log_entry = f"\n{'='*80}\nNEW QUERY_GENIE CALL - {time.strftime('%Y-%m-%d %H:%M:%S')}\nQuestion: {question}\n{'='*80}\n"
+    log_entry = f"\n{'='*80}\nNEW QUERY_GENIE CALL - {time.strftime('%Y-%m-%d %H:%M:%S')}\nQuestion: {question}\nGENIE_ROOM_ID: {GENIE_ROOM_ID if 'GENIE_ROOM_ID' in globals() else 'NOT SET'}\n{'='*80}\n"
     
     # Print to console FIRST (this always works)
-    print(f"\n{'='*80}")
-    print(f"DEBUG: query_genie CALLED")
-    print(f"DEBUG: Question: {question}")
-    print(f"DEBUG: Logging to: {debug_log_path}")
-    print(f"{'='*80}")
+    print(f"\n{'='*80}", flush=True)
+    print(f"DEBUG: query_genie CALLED", flush=True)
+    print(f"DEBUG: Question: {question}", flush=True)
+    print(f"DEBUG: Logging to: {debug_log_path}", flush=True)
+    print(f"{'='*80}", flush=True)
+    
+    # Also write to stderr (Streamlit might capture stdout)
+    import sys
+    print(f"DEBUG: query_genie CALLED - Question: {question}", file=sys.stderr, flush=True)
     
     # Then write to file
     try:
@@ -313,9 +317,9 @@ def query_genie(
                 os.fsync(f.fileno())  # Force OS-level flush
             except:
                 pass
-        print(f"DEBUG: Successfully wrote to {debug_log_path}")
+        print(f"DEBUG: Successfully wrote to {debug_log_path}", flush=True)
     except Exception as e:
-        print(f"DEBUG: ERROR writing to debug log: {e}")
+        print(f"DEBUG: ERROR writing to debug log: {e}", flush=True)
         import traceback
         traceback.print_exc()
         # Continue anyway - don't let logging failure break the function
@@ -442,14 +446,28 @@ Question asked: {question}"""
         query_data = None
         
         # First, try to get the assistant's response from conversation messages
-        # Wait a bit more for Genie to process
-        time.sleep(3)
+        # Wait a bit more for Genie to process - per docs, poll every 1-5 seconds
+        time.sleep(2)
         
         if conversation_id and GENIE_ROOM_ID:
             try:
                 # list_conversation_messages requires space_id as first positional argument
+                # Per docs: Use this to retrieve all messages from a conversation
                 messages = genie.list_conversation_messages(GENIE_ROOM_ID, conversation_id=conversation_id)
                 print(f"DEBUG: list_conversation_messages returned: {type(messages)}")
+                
+                # Log full response to debug file
+                try:
+                    with open(debug_log_path, "a", encoding='utf-8') as f:
+                        f.write(f"\nlist_conversation_messages response:\n")
+                        f.write(f"Type: {type(messages)}\n")
+                        if hasattr(messages, '__dict__'):
+                            f.write(f"Keys: {list(messages.__dict__.keys())}\n")
+                        f.flush()
+                        os.fsync(f.fileno())
+                except:
+                    pass
+                
                 if messages:
                     # Handle different response structures
                     msg_list = None
@@ -462,18 +480,54 @@ Question asked: {question}"""
                     
                     print(f"DEBUG: Message list type: {type(msg_list)}, length: {len(msg_list) if msg_list else 0}")
                     
+                    # Log all messages to debug file
+                    try:
+                        with open(debug_log_path, "a", encoding='utf-8') as f:
+                            f.write(f"\nFound {len(msg_list) if msg_list else 0} message(s) in conversation\n")
+                            if msg_list:
+                                for idx, msg in enumerate(msg_list):
+                                    f.write(f"\nMessage {idx + 1}:\n")
+                                    if hasattr(msg, '__dict__'):
+                                        for k, v in msg.__dict__.items():
+                                            if isinstance(v, str) and len(v) > 200:
+                                                f.write(f"  {k}: {v[:200]}...\n")
+                                            else:
+                                                f.write(f"  {k}: {v}\n")
+                                    elif isinstance(msg, dict):
+                                        for k, v in msg.items():
+                                            if isinstance(v, str) and len(v) > 200:
+                                                f.write(f"  {k}: {v[:200]}...\n")
+                                            else:
+                                                f.write(f"  {k}: {v}\n")
+                            f.flush()
+                            os.fsync(f.fileno())
+                    except Exception as e:
+                        print(f"DEBUG: Error logging messages: {e}")
+                    
                     if msg_list:
                         # Get ALL messages to find the assistant response
+                        # Check messages in reverse order (newest first)
                         for idx, msg in enumerate(reversed(msg_list)):
                             # Look for assistant/genie messages
                             role = getattr(msg, 'role', None) or (isinstance(msg, dict) and msg.get('role'))
                             content = getattr(msg, 'content', None) or (isinstance(msg, dict) and msg.get('content'))
                             
-                            print(f"DEBUG: Message {idx}: role={role}, content_length={len(content) if content else 0}, content_preview={content[:100] if content else None}")
+                            # Check attachments in this message
+                            msg_attachments = getattr(msg, 'attachments', None) or (isinstance(msg, dict) and msg.get('attachments'))
+                            
+                            print(f"DEBUG: Message {idx}: role={role}, content_length={len(content) if content else 0}, attachments={len(msg_attachments) if msg_attachments else 0}")
                             
                             # Skip if content is the question itself
                             if content == question:
                                 print(f"DEBUG: Skipping message {idx} - matches question")
+                                # But check attachments - might have answer there
+                                if msg_attachments:
+                                    for att in msg_attachments:
+                                        att_text = getattr(att, 'text', None) or (isinstance(att, dict) and att.get('text'))
+                                        if att_text and att_text != question:
+                                            print(f"DEBUG: Found text in attachment of question message: {att_text[:200]}")
+                                            if not genie_response:
+                                                genie_response = att_text
                                 continue
                             
                             # Check if it's an assistant response
@@ -502,11 +556,30 @@ Question asked: {question}"""
                                     print(f"DEBUG: Found answer-like content: {content[:200]}")
                                     genie_response = content
                                     break
+                            
+                            # Also check attachments in this message
+                            if msg_attachments:
+                                for att in msg_attachments:
+                                    att_text = getattr(att, 'text', None) or (isinstance(att, dict) and att.get('text'))
+                                    if att_text and att_text != question and len(att_text) > len(question) + 10:
+                                        print(f"DEBUG: Found text in message {idx} attachment: {att_text[:200]}")
+                                        if not genie_response:
+                                            genie_response = att_text
+                                            break
             except Exception as e:
                 # Log error for debugging
-                print(f"DEBUG: Error listing conversation messages: {e}")
+                print(f"DEBUG: Error listing conversation messages: {e}", flush=True)
                 import traceback
                 traceback.print_exc()
+                # Also log to file
+                try:
+                    with open(debug_log_path, "a", encoding='utf-8') as f:
+                        f.write(f"\nERROR listing messages: {e}\n")
+                        traceback.print_exc(file=f)
+                        f.flush()
+                        os.fsync(f.fileno())
+                except:
+                    pass
                 pass
         
         # Then try to get message details and query results
