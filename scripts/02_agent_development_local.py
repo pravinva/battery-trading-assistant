@@ -1523,6 +1523,18 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
                         for row in query_data:
                             formatted_rows.append(" | ".join(str(val) for val in row))
                         genie_response = "\n".join(formatted_rows)
+                    elif query_data and genie_response:
+                        # If we have both genie_response and query_data, format query_data as table
+                        # and append to response (genie_response will be shown first)
+                        formatted_rows = []
+                        if columns:
+                            formatted_rows.append(" | ".join(columns))
+                            formatted_rows.append(" | ".join(["---"] * len(columns)))
+                        for row in query_data:
+                            formatted_rows.append(" | ".join(str(val) for val in row))
+                        # Store formatted data for later inclusion in response_parts
+                        formatted_query_data = "\n".join(formatted_rows)
+                        # genie_response already set, formatted_query_data will be added to response_parts later
                     elif hasattr(result.result, 'rows') and result.result.rows:
                         query_data = result.result.rows
                         
