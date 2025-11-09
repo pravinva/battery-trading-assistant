@@ -763,11 +763,15 @@ def get_genie_logs():
     return logs
 
 def add_genie_log(entry):
-    """Add a log entry"""
-    global _genie_execution_logs
-    import time
-    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-    _genie_execution_logs.append(f"[{timestamp}] {entry}")
+    """Add a log entry - safe to call even if logging fails"""
+    try:
+        global _genie_execution_logs
+        import time
+        timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+        _genie_execution_logs.append(f"[{timestamp}] {entry}")
+    except Exception:
+        # Silently fail - logging should never break the main flow
+        pass
 
 # Tool 5: Query Genie (MCP Server or Direct API)
 @tool

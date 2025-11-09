@@ -891,13 +891,19 @@ if AGENT_AVAILABLE:
                                         try:
                                             agent_module_logs = st.session_state.get('agent_module')
                                             if agent_module_logs and hasattr(agent_module_logs, 'get_genie_logs'):
-                                                logs = agent_module_logs.get_genie_logs()
-                                                if logs:
-                                                    with st.expander("📋 Execution Logs (MCP vs Direct API)", expanded=True):
-                                                        for log_entry in logs:
-                                                            st.text(log_entry)
+                                                try:
+                                                    logs = agent_module_logs.get_genie_logs()
+                                                    if logs:
+                                                        with st.expander("📋 Execution Logs (MCP vs Direct API)", expanded=True):
+                                                            for log_entry in logs:
+                                                                st.text(log_entry)
+                                                except Exception as log_error:
+                                                    # Silently fail if log retrieval fails - don't break the UI
+                                                    if os.environ.get("DEBUG", "false").lower() == "true":
+                                                        st.caption(f"⚠️ Could not retrieve logs: {log_error}")
                                         except Exception as e:
-                                            pass  # Silently fail if logs not available
+                                            # Silently fail if logs not available - don't break the UI
+                                            pass
                                         
                                         # Extract SQL query from Genie response if present
                                         result_text = sql_result.get('result', '')
