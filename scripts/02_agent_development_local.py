@@ -1689,108 +1689,108 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
                 pass
     
     # Check if we got a valid answer from Genie
-        import re
-        has_valid_answer = False
+    import re
+    has_valid_answer = False
+    
+    # Include Genie's answer FIRST - this is what the agent should use
+    # Check if this is a metadata query (schema, structure, table info) BEFORE processing response
+    is_metadata_query = bool(
+        'schema' in question.lower() or
+        'structure' in question.lower() or
+        ('table' in question.lower() and ('column' in question.lower() or 'show' in question.lower() or 'describe' in question.lower())) or
+        'what tables' in question.lower() or
+        'show tables' in question.lower() or
+        'describe' in question.lower()
+    )
+    
+    if genie_response and genie_response != question:
+        # Check if genie_response contains actual answer (not just question)
+        # For data queries: look for numbers/units OR if we have query_data (results will show numbers)
+        # For metadata/descriptive queries: look for meaningful text content
+        response_length_check = len(genie_response) > len(question) + 10  # Answer should be longer
         
-        # Include Genie's answer FIRST - this is what the agent should use
-        # Check if this is a metadata query (schema, structure, table info) BEFORE processing response
-        is_metadata_query = bool(
-            'schema' in question.lower() or
-            'structure' in question.lower() or
-            ('table' in question.lower() and ('column' in question.lower() or 'show' in question.lower() or 'describe' in question.lower())) or
-            'what tables' in question.lower() or
-            'show tables' in question.lower() or
-            'describe' in question.lower()
+        # Check for numeric/data indicators OR if we have query_data (which contains the actual numbers)
+        has_numeric_data = bool(re.search(r'\d+', genie_response) or 
+                               'MWh' in genie_response or 'MW' in genie_response or 
+                               '$' in genie_response or '%' in genie_response or
+                               query_data)  # If we have query_data, we have numeric results
+        
+        # Check for metadata/descriptive content (table names, column names, etc.)
+        # This helps identify when Genie returned metadata even if response is short
+        has_metadata_content = bool(
+            'table' in genie_response.lower() or 
+            'column' in genie_response.lower() or
+            'schema' in genie_response.lower() or
+            'structure' in genie_response.lower() or
+            'relationship' in genie_response.lower() or
+            'battery_telemetry' in genie_response or
+            'battery_dispatch' in genie_response or
+            'battery_assets' in genie_response or
+            'SELECT' in genie_response.upper() or
+            'FROM' in genie_response.upper() or
+            'DESCRIBE' in genie_response.upper() or
+            'SHOW' in genie_response.upper()
         )
         
-        if genie_response and genie_response != question:
-            # Check if genie_response contains actual answer (not just question)
-            # For data queries: look for numbers/units OR if we have query_data (results will show numbers)
-            # For metadata/descriptive queries: look for meaningful text content
-            response_length_check = len(genie_response) > len(question) + 10  # Answer should be longer
-            
-            # Check for numeric/data indicators OR if we have query_data (which contains the actual numbers)
-            has_numeric_data = bool(re.search(r'\d+', genie_response) or 
-                                   'MWh' in genie_response or 'MW' in genie_response or 
-                                   '$' in genie_response or '%' in genie_response or
-                                   query_data)  # If we have query_data, we have numeric results
-            
-            # Check for metadata/descriptive content (table names, column names, etc.)
-            # This helps identify when Genie returned metadata even if response is short
-            has_metadata_content = bool(
-                'table' in genie_response.lower() or 
-                'column' in genie_response.lower() or
-                'schema' in genie_response.lower() or
-                'structure' in genie_response.lower() or
-                'relationship' in genie_response.lower() or
-                'battery_telemetry' in genie_response or
-                'battery_dispatch' in genie_response or
-                'battery_assets' in genie_response or
-                'SELECT' in genie_response.upper() or
-                'FROM' in genie_response.upper() or
-                'DESCRIBE' in genie_response.upper() or
-                'SHOW' in genie_response.upper()
-            )
-            
-            # Accept if:
-            # 1. It's longer than question AND (has numeric data OR has metadata content)
-            # 2. OR if we have query_data (actual results) - that's a valid answer even if description is short
-            # 3. OR if it's a metadata query and has SQL or query_data
-            if response_length_check and (has_numeric_data or has_metadata_content):
-                # This is Genie's actual answer - put it first and make it prominent
-                # Format the text to ensure proper spacing
+        # Accept if:
+        # 1. It's longer than question AND (has numeric data OR has metadata content)
+        # 2. OR if we have query_data (actual results) - that's a valid answer even if description is short
+        # 3. OR if it's a metadata query and has SQL or query_data
+        if response_length_check and (has_numeric_data or has_metadata_content):
+            # This is Genie's actual answer - put it first and make it prominent
+            # Format the text to ensure proper spacing
+            formatted_response = format_response_text(genie_response)
+            response_parts.append(f"{formatted_response}")
+            has_valid_answer = True
+        elif query_data:
+            # If we have query_data, that's a valid answer even if genie_response is short
+            # Use genie_response as description, query_data will be formatted and added
+            if genie_response:
                 formatted_response = format_response_text(genie_response)
                 response_parts.append(f"{formatted_response}")
+            has_valid_answer = True
+        elif is_metadata_query and (sql_query or query_data):
+            # For metadata queries, SQL or query_data counts as valid answer even if genie_response is short
+            has_valid_answer = True
+    
+    # Check query_data for valid results
+    if query_data:
+        try:
+            # Check if query_data has actual data
+            if isinstance(query_data, list) and len(query_data) > 0:
                 has_valid_answer = True
-            elif query_data:
-                # If we have query_data, that's a valid answer even if genie_response is short
-                # Use genie_response as description, query_data will be formatted and added
-                if genie_response:
-                    formatted_response = format_response_text(genie_response)
-                    response_parts.append(f"{formatted_response}")
+            elif isinstance(query_data, dict) and ('rows' in query_data or 'data' in query_data):
+                rows_or_data = query_data.get('rows') or query_data.get('data')
+                if rows_or_data and len(rows_or_data) > 0:
+                    has_valid_answer = True
+        except Exception:
+            pass
+    
+    # If we don't have a valid answer, check if Genie returned the question (meaning it didn't process)
+    # For metadata queries, also check if we have SQL or query_data (those count as valid answers)
+    if not has_valid_answer:
+        # For metadata queries, check if we have SQL or query_data even if genie_response is missing/short
+        if is_metadata_query and (sql_query or query_data):
+            print(f"DEBUG: Metadata query - accepting SQL or query_data as valid response")
+            # Use SQL or query_data to construct response
+            if not genie_response and sql_query:
+                genie_response = f"The following SQL query shows the schema/structure:\n\n{sql_query}"
+                response_parts.append(genie_response)
                 has_valid_answer = True
-            elif is_metadata_query and (sql_query or query_data):
-                # For metadata queries, SQL or query_data counts as valid answer even if genie_response is short
+            elif not genie_response and query_data:
+                genie_response = "Schema information retrieved from database."
+                response_parts.append(genie_response)
                 has_valid_answer = True
         
-        # Check query_data for valid results
-        if query_data:
-            try:
-                # Check if query_data has actual data
-                if isinstance(query_data, list) and len(query_data) > 0:
-                    has_valid_answer = True
-                elif isinstance(query_data, dict) and ('rows' in query_data or 'data' in query_data):
-                    rows_or_data = query_data.get('rows') or query_data.get('data')
-                    if rows_or_data and len(rows_or_data) > 0:
-                        has_valid_answer = True
-            except Exception:
-                pass
-        
-        # If we don't have a valid answer, check if Genie returned the question (meaning it didn't process)
-        # For metadata queries, also check if we have SQL or query_data (those count as valid answers)
-        if not has_valid_answer:
-            # For metadata queries, check if we have SQL or query_data even if genie_response is missing/short
-            if is_metadata_query and (sql_query or query_data):
-                print(f"DEBUG: Metadata query - accepting SQL or query_data as valid response")
-                # Use SQL or query_data to construct response
-                if not genie_response and sql_query:
-                    genie_response = f"The following SQL query shows the schema/structure:\n\n{sql_query}"
-                    response_parts.append(genie_response)
-                    has_valid_answer = True
-                elif not genie_response and query_data:
-                    genie_response = "Schema information retrieved from database."
-                    response_parts.append(genie_response)
-                    has_valid_answer = True
-            
-            # If still no valid answer, check if Genie returned the question unchanged
-            if not has_valid_answer and not sql_query:
-                # Check if Genie just echoed the question back (common when it can't process)
-                if genie_response == question or (genie_response and len(genie_response) <= len(question) + 5):
-                    if DEBUG_MODE:
-                        print(f"DEBUG: Genie returned question unchanged: genie_response='{genie_response}', question='{question}'")
-                    if is_metadata_query:
-                        # Metadata query failed - provide helpful error
-                        error_msg = f"""Genie Error: Genie did not process the metadata question and returned it unchanged.
+        # If still no valid answer, check if Genie returned the question unchanged
+        if not has_valid_answer and not sql_query:
+            # Check if Genie just echoed the question back (common when it can't process)
+            if genie_response == question or (genie_response and len(genie_response) <= len(question) + 5):
+                if DEBUG_MODE:
+                    print(f"DEBUG: Genie returned question unchanged: genie_response='{genie_response}', question='{question}'")
+                if is_metadata_query:
+                    # Metadata query failed - provide helpful error
+                    error_msg = f"""Genie Error: Genie did not process the metadata question and returned it unchanged.
 
 Question: {question}
 Genie Response: {genie_response if genie_response else 'None'}
@@ -1812,9 +1812,9 @@ Please check:
 4. GENIE_ROOM_ID is set correctly: {GENIE_ROOM_ID if GENIE_ROOM_ID else 'NOT SET'}
 
 The agent cannot proceed without Genie's answer."""
-                    else:
-                        # Regular query failed
-                        error_msg = f"""Genie Error: Genie did not process the question and returned it unchanged.
+                else:
+                    # Regular query failed
+                    error_msg = f"""Genie Error: Genie did not process the question and returned it unchanged.
 
 Question: {question}
 Genie Response: {genie_response if genie_response else 'None'}
@@ -1841,9 +1841,9 @@ Please check:
 4. GENIE_ROOM_ID is set correctly: {GENIE_ROOM_ID if GENIE_ROOM_ID else 'NOT SET'}
 
 The agent cannot proceed without Genie's answer."""
-                    raise Exception(error_msg)
-                else:
-                    error_msg = f"""Genie Error: Could not extract answer from Genie response.
+                raise Exception(error_msg)
+            else:
+                error_msg = f"""Genie Error: Could not extract answer from Genie response.
 
 Question: {question}
 Genie Response: {genie_response if genie_response else 'None'}
@@ -1860,7 +1860,7 @@ Please check:
 4. GENIE_ROOM_ID is set correctly: {GENIE_ROOM_ID if GENIE_ROOM_ID else 'NOT SET'}
 
 The agent cannot proceed without Genie's answer."""
-                    raise Exception(error_msg)
+                raise Exception(error_msg)
         
         # If we have SQL but no answer, that's also a problem
         if sql_query and not has_valid_answer:
