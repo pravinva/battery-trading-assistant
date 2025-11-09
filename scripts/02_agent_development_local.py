@@ -288,25 +288,37 @@ def query_genie(
     
     Returns Genie's response with query results."""
     
-    # Initialize debug log
+    # Initialize debug log - MUST be first thing, write immediately
     debug_log_path = "/tmp/genie_debug.log"
     import json
     import time
+    import sys
+    
+    # Write immediately with force flush
+    log_entry = f"\n{'='*80}\nNEW QUERY_GENIE CALL - {time.strftime('%Y-%m-%d %H:%M:%S')}\nQuestion: {question}\n{'='*80}\n"
+    
+    # Print to console FIRST (this always works)
+    print(f"\n{'='*80}")
+    print(f"DEBUG: query_genie CALLED")
+    print(f"DEBUG: Question: {question}")
+    print(f"DEBUG: Logging to: {debug_log_path}")
+    print(f"{'='*80}")
+    
+    # Then write to file
     try:
-        with open(debug_log_path, "a") as f:
-            f.write(f"\n{'='*80}\n")
-            f.write(f"NEW QUERY_GENIE CALL\n")
-            f.write(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"Question: {question}\n")
-            f.write(f"{'='*80}\n")
+        with open(debug_log_path, "a", encoding='utf-8') as f:
+            f.write(log_entry)
             f.flush()
-        print(f"\n{'='*80}")
-        print(f"DEBUG: query_genie called with question: {question}")
-        print(f"DEBUG: Logging to {debug_log_path}")
+            try:
+                os.fsync(f.fileno())  # Force OS-level flush
+            except:
+                pass
+        print(f"DEBUG: Successfully wrote to {debug_log_path}")
     except Exception as e:
-        print(f"DEBUG: Error initializing debug log: {e}")
+        print(f"DEBUG: ERROR writing to debug log: {e}")
         import traceback
         traceback.print_exc()
+        # Continue anyway - don't let logging failure break the function
     
     try:
         if not GENIE_ROOM_ID:
