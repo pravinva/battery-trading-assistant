@@ -60,32 +60,50 @@ class DataAgent(BaseAgent):
         self._genie_module = None
     
     def _get_query_genie_func(self):
-        """Get the query_genie function from existing implementation"""
+        """Get the query_genie function from existing implementation
+        
+        Respects USE_GENIE_MCP setting from the agent module to route correctly.
+        """
         if self._genie_module is None:
             agent_module = _get_genie_query_function()
             if agent_module:
-                # Prefer direct API functions over tool wrapper
-                # Check for direct API function first (more reliable)
-                if hasattr(agent_module, 'query_genie_via_direct_api'):
-                    # Use direct API function - it takes (question, is_visualization_request)
-                    def wrapper(question: str, is_viz: bool = False) -> str:
-                        return agent_module.query_genie_via_direct_api(question, is_viz)
-                    self._genie_module = wrapper
-                elif hasattr(agent_module, 'query_genie_via_mcp'):
-                    # Use MCP function
-                    def wrapper(question: str, is_viz: bool = False) -> str:
-                        return agent_module.query_genie_via_mcp(question, is_viz)
-                    self._genie_module = wrapper
-                elif hasattr(agent_module, 'query_genie'):
-                    # Fallback to tool wrapper
-                    query_genie_tool = agent_module.query_genie
-                    if hasattr(query_genie_tool, 'invoke'):
-                        def wrapper(question: str) -> str:
-                            result = query_genie_tool.invoke({"question": question})
-                            return result if isinstance(result, str) else str(result)
+                # Check USE_GENIE_MCP flag from agent module to determine routing
+                use_mcp = getattr(agent_module, 'USE_GENIE_MCP', False)
+                mcp_client = getattr(agent_module, '_mcp_client', None)
+                
+                # Route based on MCP configuration (same logic as query_genie tool)
+                if use_mcp and mcp_client:
+                    # Use MCP function if enabled and client is available
+                    if hasattr(agent_module, 'query_genie_via_mcp'):
+                        def wrapper(question: str, is_viz: bool = False) -> str:
+                            return agent_module.query_genie_via_mcp(question, is_viz)
                         self._genie_module = wrapper
                     else:
-                        self._genie_module = query_genie_tool
+                        # Fallback to query_genie tool which will route correctly
+                        query_genie_tool = agent_module.query_genie
+                        if hasattr(query_genie_tool, 'invoke'):
+                            def wrapper(question: str) -> str:
+                                result = query_genie_tool.invoke({"question": question})
+                                return result if isinstance(result, str) else str(result)
+                            self._genie_module = wrapper
+                        else:
+                            self._genie_module = query_genie_tool
+                else:
+                    # Use Direct API function (default)
+                    if hasattr(agent_module, 'query_genie_via_direct_api'):
+                        def wrapper(question: str, is_viz: bool = False) -> str:
+                            return agent_module.query_genie_via_direct_api(question, is_viz)
+                        self._genie_module = wrapper
+                    elif hasattr(agent_module, 'query_genie'):
+                        # Fallback to query_genie tool which will route correctly
+                        query_genie_tool = agent_module.query_genie
+                        if hasattr(query_genie_tool, 'invoke'):
+                            def wrapper(question: str) -> str:
+                                result = query_genie_tool.invoke({"question": question})
+                                return result if isinstance(result, str) else str(result)
+                            self._genie_module = wrapper
+                        else:
+                            self._genie_module = query_genie_tool
         return self._genie_module
     
     def can_handle(self, question: str) -> bool:

@@ -506,30 +506,31 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Genie MCP Toggle (only for single agent mode)
-    if st.session_state.agent_mode == "single":
-        # Toggle button for Genie MCP
-        use_mcp = st.toggle(
-            "Use Genie MCP Server",
-            value=st.session_state.use_genie_mcp,
-            help="Enable to use Genie via Model Context Protocol (MCP) instead of direct API. Requires databricks-mcp package."
-        )
-        
-        # Update session state and environment variable if changed
-        if use_mcp != st.session_state.use_genie_mcp:
-            st.session_state.use_genie_mcp = use_mcp
-            os.environ["USE_GENIE_MCP"] = "true" if use_mcp else "false"
-            # Clear agent cache to reload with new setting
-            load_agent.clear()
-            st.rerun()
-        
-        # Show current MCP status
-        if use_mcp:
-            st.success("✅ Genie MCP enabled")
-        else:
-            st.info("ℹ️ Using direct Genie API")
+    # Genie MCP Toggle (applies to both modes)
+    # Toggle button for Genie MCP
+    use_mcp = st.toggle(
+        "Use Genie MCP Server",
+        value=st.session_state.use_genie_mcp,
+        help="Enable to use Genie via Model Context Protocol (MCP) instead of direct API. Applies to both Single Agent and Multi-Agent Supervisor modes. Requires databricks-mcp package."
+    )
+    
+    # Update session state and environment variable if changed
+    if use_mcp != st.session_state.use_genie_mcp:
+        st.session_state.use_genie_mcp = use_mcp
+        os.environ["USE_GENIE_MCP"] = "true" if use_mcp else "false"
+        # Clear caches to reload with new setting
+        load_agent.clear()
+        load_supervisor.clear()
+        st.rerun()
+    
+    # Show current MCP status
+    if use_mcp:
+        st.success("✅ Genie MCP enabled")
     else:
-        # Multi-Agent Supervisor mode
+        st.info("ℹ️ Using direct Genie API")
+    
+    # Show mode-specific info
+    if st.session_state.agent_mode == "multi":
         st.info("🤖 Multi-Agent Supervisor Mode\n\nRoutes queries to:\n- Data Agent (Genie)\n- Docs Agent (Vector Search)")
     
     st.markdown("---")

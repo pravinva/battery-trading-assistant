@@ -40,9 +40,20 @@ LLM_ENDPOINT = "databricks-claude-sonnet-4-5"
 # Genie Configuration
 GENIE_ROOM_ID = os.environ.get("GENIE_ROOM_ID", "01f0bca10415147a91fe3c98f80e596e")
 
+# Set USE_GENIE_MCP environment variable before initializing agents
+# This ensures agents use the correct Genie integration method
+USE_GENIE_MCP = os.environ.get("USE_GENIE_MCP", "false").lower() == "true"
+
 print("=" * 80)
 print("Multi-Agent Supervisor Implementation")
 print("=" * 80)
+print()
+
+# Show Genie integration method
+if USE_GENIE_MCP:
+    print("🔌 Genie Integration: MCP Server")
+else:
+    print("🔌 Genie Integration: Direct API")
 print()
 
 # Initialize specialized agents
