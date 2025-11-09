@@ -1411,87 +1411,80 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
     
     # Extract response from attachments (per Genie API docs)
     # According to docs: attachments array contains:
-    # - text: Generated text response (Genie's natural language answer)
-    # - query: Query statement if it exists
+    # - text: Generated text response (Genie's natural language answer) - OPTIONAL
+    # - query: Query statement if it exists - REQUIRED when SQL is generated
     # - attachment_id: Identifier to get query results
     # Reference: https://docs.databricks.com/aws/en/genie/conversation-api#-best-practices-for-using-the-genie-api
+    # IMPORTANT: Always check attachments first - message.content is usually just the question
+    # IMPORTANT: Genie often returns query.description as the natural language response, not text
     if attachments:
         for attachment in attachments:
-            # PRIORITY 1: Extract text response - this is Genie's natural language answer
-            # Per docs: "The attachments array contains Genie's response. It includes the generated text response (text)"
-            # IMPORTANT: For text-only responses, text is a TextAttachment object with .content attribute
             candidate_text = None
-            if hasattr(attachment, 'text'):
-                text_obj = attachment.text
-                # Check if it's a TextAttachment object (has .content attribute)
-                if hasattr(text_obj, 'content'):
-                    candidate_text = text_obj.content
-                elif isinstance(text_obj, str):
-                    candidate_text = text_obj
-                elif text_obj is None:
-                    candidate_text = None
-                else:
-                    # Try to convert to string
-                    candidate_text = str(text_obj)
-            elif isinstance(attachment, dict):
-                text_obj = attachment.get('text')
-                if isinstance(text_obj, dict) and 'content' in text_obj:
-                    candidate_text = text_obj.get('content')
-                elif isinstance(text_obj, str):
-                    candidate_text = text_obj
-                else:
-                    candidate_text = None
-                
-                if candidate_text and candidate_text != question and len(candidate_text) > len(question) + 10:
-                    if not genie_response:
-                        genie_response = candidate_text
-                
-                # Extract SQL query from attachment
-                if hasattr(attachment, 'query'):
-                    query_obj = attachment.query
-                    if hasattr(query_obj, 'query'):
-                        candidate_query = query_obj.query
-                    elif isinstance(query_obj, dict):
-                        candidate_query = query_obj.get('query')
-                    elif isinstance(query_obj, str):
-                        candidate_query = query_obj
+            
+            # PRIORITY 1: Check query.description FIRST (Genie often uses this instead of text)
+            if hasattr(attachment, 'query') and attachment.query is not None:
+                query_obj = attachment.query
+                if hasattr(query_obj, 'description') and query_obj.description:
+                    candidate_text = query_obj.description
+                elif isinstance(query_obj, dict):
+                    candidate_text = query_obj.get('description')
+            
+            # PRIORITY 2: Check text attachment (if description not found)
+            if not candidate_text:
+                if hasattr(attachment, 'text') and attachment.text is not None:
+                    text_obj = attachment.text
+                    # Check if it's a TextAttachment object (has .content attribute)
+                    if hasattr(text_obj, 'content'):
+                        candidate_text = text_obj.content
+                    elif isinstance(text_obj, str):
+                        candidate_text = text_obj
                     else:
-                        candidate_query = None
+                        candidate_text = str(text_obj)
                 elif isinstance(attachment, dict):
-                    query_obj = attachment.get('query')
-                    if isinstance(query_obj, dict):
-                        candidate_query = query_obj.get('query')
-                    elif isinstance(query_obj, str):
-                        candidate_query = query_obj
-                    else:
-                        candidate_query = None
-                else:
-                    candidate_query = None
-                
-                if candidate_query and not sql_query:
-                    sql_query = candidate_query
-                
-                # Extract description from query attachment - use as fallback if no text response
-                if not genie_response and hasattr(attachment, 'query'):
-                    query_obj = attachment.query
-                    if hasattr(query_obj, 'description'):
-                        description = query_obj.description
-                        if description and description != question and len(description) > len(question) + 10:
-                            genie_response = description
-                    elif isinstance(query_obj, dict):
-                        description = query_obj.get('description')
-                        if description and description != question and len(description) > len(question) + 10:
-                            genie_response = description
-                
-                # Extract statement_id for query results
-                if hasattr(attachment, 'query') and hasattr(attachment.query, 'statement_id'):
-                    statement_id = attachment.query.statement_id
-                elif isinstance(attachment, dict) and attachment.get('query'):
-                    query_obj = attachment.get('query')
-                    if isinstance(query_obj, dict):
-                        statement_id = query_obj.get('statement_id')
-                    elif hasattr(query_obj, 'statement_id'):
-                        statement_id = query_obj.statement_id
+                    text_obj = attachment.get('text')
+                    if isinstance(text_obj, dict) and 'content' in text_obj:
+                        candidate_text = text_obj.get('content')
+                    elif isinstance(text_obj, str):
+                        candidate_text = text_obj
+            
+            # Use candidate_text if it's valid (not just the question)
+            if candidate_text and candidate_text != question and len(candidate_text) > len(question) + 10:
+                if not genie_response:
+                    genie_response = candidate_text
+            
+            # Extract SQL query from attachment
+            candidate_query = None
+            if hasattr(attachment, 'query') and attachment.query is not None:
+                query_obj = attachment.query
+                if hasattr(query_obj, 'query'):
+                    candidate_query = query_obj.query
+                elif isinstance(query_obj, dict):
+                    candidate_query = query_obj.get('query')
+                elif isinstance(query_obj, str):
+                    candidate_query = query_obj
+            elif isinstance(attachment, dict):
+                query_obj = attachment.get('query')
+                if isinstance(query_obj, dict):
+                    candidate_query = query_obj.get('query')
+                elif isinstance(query_obj, str):
+                    candidate_query = query_obj
+            
+            if candidate_query and not sql_query:
+                sql_query = candidate_query
+            
+            # Extract statement_id for query results
+            if hasattr(attachment, 'query') and attachment.query is not None:
+                query_obj = attachment.query
+                if hasattr(query_obj, 'statement_id'):
+                    statement_id = query_obj.statement_id
+                elif isinstance(query_obj, dict):
+                    statement_id = query_obj.get('statement_id')
+            elif isinstance(attachment, dict) and attachment.get('query'):
+                query_obj = attachment.get('query')
+                if isinstance(query_obj, dict):
+                    statement_id = query_obj.get('statement_id')
+                elif hasattr(query_obj, 'statement_id'):
+                    statement_id = query_obj.statement_id
     
     # Get query results using statement_id (after collecting from all attachments)
     statement_id = None  # Initialize if not set in loop
