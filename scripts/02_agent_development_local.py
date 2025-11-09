@@ -39,6 +39,7 @@ from langchain_core.tools import tool
 from typing import Annotated
 import os
 import json
+from json import JSONDecodeError
 
 # Configuration
 CATALOG = "ea_trading"
@@ -1035,7 +1036,7 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
                                     # If still no response but we have SQL, create a simple response
                                     if not genie_response and sql_query:
                                         genie_response = f"Query executed successfully. Results: {str(query_data) if query_data else 'No data returned'}"
-                                except json.JSONDecodeError as e:
+                                except JSONDecodeError as e:
                                     if DEBUG_MODE:
                                         print(f"DEBUG: Failed to parse nested content JSON: {e}")
                                     # Use the content string as-is
@@ -1062,7 +1063,7 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
                             # Last resort: create response from SQL
                             if not genie_response and sql_query:
                                 genie_response = f"Query executed successfully. Results: {str(query_data) if query_data else 'No data returned'}"
-                    except json.JSONDecodeError:
+                    except JSONDecodeError:
                         # If not JSON, use as plain text
                         genie_response = content_text
                 elif isinstance(first_content, str):
