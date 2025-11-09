@@ -860,6 +860,7 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
     Based on: https://docs.databricks.com/aws/en/generative-ai/mcp/managed-mcp
     Genie MCP server exposes tools that can be discovered via list_tools()
     """
+    import json  # Import at function level to avoid scoping issues
     DEBUG_MODE = os.environ.get("DEBUG", "false").lower() == "true"
     
     # Initialize variables
@@ -944,8 +945,13 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
                         print(f"DEBUG: Content text type: {type(content_text)}")
                         print(f"DEBUG: Content text preview: {content_text[:200]}")
                     
+                if hasattr(first_content, 'text'):
+                    content_text = first_content.text
+                    if DEBUG_MODE:
+                        print(f"DEBUG: Content text type: {type(content_text)}")
+                        print(f"DEBUG: Content text preview: {content_text[:200]}")
+                    
                     # Parse JSON response from Genie MCP server
-                    import json
                     try:
                         parsed = json.loads(content_text)
                         if DEBUG_MODE:
