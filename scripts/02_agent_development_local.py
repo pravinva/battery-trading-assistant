@@ -87,15 +87,28 @@ if MCP_AVAILABLE and USE_MCP:
             print(f"   ⚠️  Could not list tools: {e}")
             
     except Exception as e:
-        print(f"⚠️  Failed to initialize MCP client: {e}")
-        print("   Falling back to direct Genie API calls")
-        _mcp_client = None
-        USE_MCP = False
+        print(f"❌ Failed to initialize MCP client: {e}")
+        print("   Pure MCP mode requires successful MCP client initialization")
+        raise Exception(
+            f"Failed to initialize Genie MCP client: {e}\n\n"
+            f"Please ensure:\n"
+            f"1. MCP server is enabled in workspace (Agents → MCP Servers)\n"
+            f"2. Genie MCP server is available\n"
+            f"3. Genie space ID is correct: {GENIE_ROOM_ID}\n"
+            f"4. You have permissions to use the MCP server\n"
+            f"5. Workspace hostname: {workspace_hostname}\n"
+            f"6. MCP Server URL: {_mcp_server_url if '_mcp_server_url' in locals() else 'N/A'}\n\n"
+            f"If you want to use direct Genie API instead, set USE_GENIE_MCP=false"
+        )
 elif USE_MCP and not MCP_AVAILABLE:
-    print("⚠️  USE_GENIE_MCP=true but databricks-mcp not installed")
+    print("❌ USE_GENIE_MCP=true but databricks-mcp not installed")
     print("   Install with: pip install databricks-mcp")
-    print("   Falling back to direct Genie API calls")
-    USE_MCP = False
+    print("   Pure MCP mode requires databricks-mcp - cannot fall back to direct API")
+    raise ImportError(
+        "databricks-mcp is required for MCP mode. "
+        "Install with: pip install databricks-mcp\n"
+        "Or disable MCP mode by setting USE_GENIE_MCP=false"
+    )
 
 if USE_MCP:
     print("🔌 Using Genie MCP server for queries")
@@ -757,7 +770,8 @@ def query_genie(
     
     Returns Genie's response with query results.
     
-    Uses MCP server if USE_GENIE_MCP=true, otherwise uses direct Genie API."""
+    Pure MCP implementation when USE_GENIE_MCP=true (no fallback to direct API).
+    Uses direct Genie API when USE_GENIE_MCP=false."""
     
     # Check if this query should have a visualization - ONLY if explicitly requested
     import re
@@ -796,11 +810,19 @@ To use Genie:
 
 Question asked: {question}"""
         
-        # Try MCP server first if enabled
-        if USE_MCP and _mcp_client:
+        # Pure MCP implementation - no fallback
+        if USE_MCP:
+            if not _mcp_client:
+                raise Exception(
+                    f"MCP client not initialized. Please ensure:\n"
+                    f"1. databricks-mcp is installed: pip install databricks-mcp\n"
+                    f"2. MCP server is enabled in workspace (Agents → MCP Servers)\n"
+                    f"3. Genie space ID is correct: {GENIE_ROOM_ID}\n"
+                    f"4. You have permissions to use the MCP server"
+                )
             return query_genie_via_mcp(question, is_visualization_request)
         else:
-            # Fall back to direct Genie API
+            # Direct Genie API (when MCP is not enabled)
             return query_genie_via_direct_api(question, is_visualization_request)
     
     except Exception as e:
@@ -939,15 +961,22 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
         return response
         
     except Exception as e:
+        # Pure MCP implementation - raise error instead of falling back
+        error_msg = (
+            f"Genie MCP Error: {str(e)}\n\n"
+            f"Please ensure:\n"
+            f"1. MCP server is enabled in workspace (Agents → MCP Servers)\n"
+            f"2. Genie MCP server is available and accessible\n"
+            f"3. Genie space ID is correct: {GENIE_ROOM_ID}\n"
+            f"4. You have permissions to use the MCP server\n"
+            f"5. MCP Server URL: {_mcp_server_url}\n\n"
+            f"Question asked: {question}"
+        )
         if DEBUG_MODE:
             print(f"DEBUG: MCP query failed: {e}")
             import traceback
             traceback.print_exc()
-        
-        # Fall back to direct API if MCP fails
-        if DEBUG_MODE:
-            print(f"DEBUG: Falling back to direct Genie API")
-        return query_genie_via_direct_api(question, is_visualization_request)
+        raise Exception(error_msg)
 
 def query_genie_via_direct_api(question: str, is_visualization_request: bool) -> str:
     """Query Genie via direct API (original implementation)"""
