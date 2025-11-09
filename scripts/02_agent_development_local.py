@@ -599,10 +599,15 @@ Question asked: {question}"""
                     traceback.print_exc()
                 
                 # Extract response from attachments (per Genie API docs)
-                # IMPORTANT: Genie's answer is NOT in content field - it's in query results or description
+                # According to docs: attachments array contains:
+                # - text: Generated text response (Genie's natural language answer)
+                # - query: Query statement if it exists
+                # - attachment_id: Identifier to get query results
+                # Reference: https://docs.databricks.com/aws/en/genie/conversation-api#-best-practices-for-using-the-genie-api
                 if attachments:
                     for attachment in attachments:
-                        # Extract text response (usually None for query attachments)
+                        # PRIORITY 1: Extract text response - this is Genie's natural language answer
+                        # Per docs: "The attachments array contains Genie's response. It includes the generated text response (text)"
                         if hasattr(attachment, 'text'):
                             candidate_text = attachment.text
                         elif isinstance(attachment, dict):
@@ -610,10 +615,13 @@ Question asked: {question}"""
                         else:
                             candidate_text = None
                         
-                        if candidate_text and candidate_text != question:
-                            print(f"DEBUG: Found text in attachment: {candidate_text[:200]}")
+                        print(f"DEBUG: attachment.text = {candidate_text[:200] if candidate_text else 'None'}")
+                        
+                        if candidate_text and candidate_text != question and len(candidate_text) > len(question) + 10:
+                            print(f"DEBUG: Found text response in attachment: {candidate_text[:200]}")
                             if not genie_response:
                                 genie_response = candidate_text
+                                print(f"DEBUG: Using attachment.text as genie_response")
                         
                         # Extract description from query attachment - this might contain Genie's explanation
                         if hasattr(attachment, 'query'):
@@ -662,14 +670,19 @@ Question asked: {question}"""
                             print(f"DEBUG: Found query in attachment: {sql_query[:200]}")
                         
                         # Extract attachment_id for query results
+                        # Per docs: Use attachment_id to get query results via:
+                        # GET /api/2.0/genie/spaces/{space_id}/conversations/{conversation_id}/messages/{message_id}/query-result/{attachment_id}
                         attachment_id = None
                         if hasattr(attachment, 'attachment_id'):
                             attachment_id = attachment.attachment_id
                         elif isinstance(attachment, dict):
                             attachment_id = attachment.get('attachment_id') or attachment.get('id')
                         
+                        print(f"DEBUG: attachment_id = {attachment_id}")
+                        
                         # Get query results using statement_id from query attachment
                         # Extract statement_id from the query attachment
+                        # Alternative: Can also use attachment_id with get_message_query_result endpoint
                         statement_id = None
                         if hasattr(attachment, 'query') and hasattr(attachment.query, 'statement_id'):
                             statement_id = attachment.query.statement_id
@@ -680,7 +693,35 @@ Question asked: {question}"""
                             elif hasattr(query_obj, 'statement_id'):
                                 statement_id = query_obj.statement_id
                         
-                        if statement_id:
+                        print(f"DEBUG: statement_id = {statement_id}")
+                        
+                        # Try using attachment_id to get query results (per API docs)
+                        if attachment_id and not query_data:
+                            try:
+                                print(f"DEBUG: Trying get_message_query_result with attachment_id: {attachment_id}")
+                                # Per docs: GET /api/2.0/genie/spaces/{space_id}/conversations/{conversation_id}/messages/{message_id}/query-result/{attachment_id}
+                                query_result = genie.get_message_query_result(
+                                    space_id=GENIE_ROOM_ID,
+                                    conversation_id=conversation_id,
+                                    message_id=message_id,
+                                    attachment_id=attachment_id
+                                )
+                                print(f"DEBUG: get_message_query_result returned: {type(query_result)}")
+                                if query_result:
+                                    # Extract results from query_result
+                                    if hasattr(query_result, 'data'):
+                                        query_data = query_result.data
+                                    elif hasattr(query_result, 'result'):
+                                        query_data = query_result.result
+                                    elif isinstance(query_result, dict):
+                                        query_data = query_result.get('data') or query_result.get('result')
+                                    print(f"DEBUG: Got query_data from get_message_query_result: {len(query_data) if isinstance(query_data, list) else 'N/A'} rows")
+                            except Exception as e:
+                                print(f"DEBUG: Error using get_message_query_result: {e}")
+                                # Fall back to statement_id method
+                        
+                        # Fallback: Use statement_id directly with Statement Execution API
+                        if statement_id and not query_data:
                             try:
                                 print(f"DEBUG: Fetching query results using statement_id: {statement_id}")
                                 # Use statement execution API to get results
