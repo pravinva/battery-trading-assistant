@@ -2,6 +2,7 @@
 """
 Battery Trading Agent Development - Local Execution
 Run this script locally to build and test the agent
+Supports both MCP server and direct Genie API approaches
 """
 
 import warnings
@@ -15,6 +16,14 @@ os.environ["PYTHONWARNINGS"] = "ignore"
 import mlflow
 import threading
 from databricks.sdk import WorkspaceClient
+
+# Try to import MCP client - fallback if not available
+try:
+    from databricks.langchain.mcp import DatabricksMCPClient
+    MCP_AVAILABLE = True
+except ImportError:
+    MCP_AVAILABLE = False
+
 try:
     from databricks_langchain import ChatDatabricks
 except ImportError:
@@ -35,9 +44,43 @@ ENDPOINT_NAME = "one-env-shared-endpoint-10"
 INDEX_NAME = f"{CATALOG}.{SCHEMA}.battery_docs_index"
 LLM_ENDPOINT = "databricks-claude-sonnet-4-5"
 
+# MCP Configuration
+USE_MCP = os.environ.get("USE_GENIE_MCP", "false").lower() == "true"
+GENIE_MCP_SERVER_URL = os.environ.get("GENIE_MCP_SERVER_URL", None)
+
 # Initialize clients
 w = WorkspaceClient()
 vsc = VectorSearchClient(disable_notice=True)
+
+# Initialize MCP client if available and enabled
+_mcp_client = None
+if MCP_AVAILABLE and USE_MCP:
+    try:
+        # For managed MCP servers, connection is handled automatically
+        # Server URL may be workspace-specific or use default managed server
+        if GENIE_MCP_SERVER_URL:
+            _mcp_client = DatabricksMCPClient(server_url=GENIE_MCP_SERVER_URL)
+        else:
+            # Try to use default managed Genie MCP server
+            # Note: Exact initialization depends on databricks-langchain implementation
+            # This may need adjustment based on actual API
+            _mcp_client = DatabricksMCPClient()
+        print("✅ Genie MCP client initialized")
+    except Exception as e:
+        print(f"⚠️  Failed to initialize MCP client: {e}")
+        print("   Falling back to direct Genie API calls")
+        _mcp_client = None
+        USE_MCP = False
+elif USE_MCP and not MCP_AVAILABLE:
+    print("⚠️  USE_GENIE_MCP=true but databricks-langchain not installed")
+    print("   Install with: pip install databricks-langchain")
+    print("   Falling back to direct Genie API calls")
+    USE_MCP = False
+
+if USE_MCP:
+    print("🔌 Using Genie MCP server for queries")
+else:
+    print("🔌 Using direct Genie API for queries")
 
 # Get warehouse ID for SQL execution
 warehouses = list(w.warehouses.list())
@@ -666,7 +709,7 @@ def get_battery_info(
     
     return "\n\n".join(output)
 
-# Tool 5: Query Genie (Databricks Genie API)
+# Tool 5: Query Genie (MCP Server or Direct API)
 @tool
 def query_genie(
     question: Annotated[str, "A natural language question about battery data. Genie will generate and execute SQL automatically."]
@@ -692,7 +735,9 @@ def query_genie(
     - battery_assets: Asset specifications
     - battery_documents: Document metadata
     
-    Returns Genie's response with query results."""
+    Returns Genie's response with query results.
+    
+    Uses MCP server if USE_GENIE_MCP=true, otherwise uses direct Genie API."""
     
     # Check if this query should have a visualization - ONLY if explicitly requested
     import re
@@ -714,38 +759,11 @@ def query_genie(
     DEBUG_MODE = os.environ.get("DEBUG", "false").lower() == "true"
     
     if DEBUG_MODE:
-        # Write immediately with force flush
-        log_entry = f"\n{'='*80}\nNEW QUERY_GENIE CALL - {time.strftime('%Y-%m-%d %H:%M:%S')}\nQuestion: {question}\nGENIE_ROOM_ID: {GENIE_ROOM_ID if 'GENIE_ROOM_ID' in globals() else 'NOT SET'}\n{'='*80}\n"
-        
-        # Print to console FIRST (this always works)
-        print(f"\n{'='*80}", flush=True)
-        print(f"DEBUG: query_genie CALLED", flush=True)
+        log_entry = f"\n{'='*80}\nNEW QUERY_GENIE CALL - {time.strftime('%Y-%m-%d %H:%M:%S')}\nQuestion: {question}\nMode: {'MCP' if USE_MCP else 'Direct API'}\nGENIE_ROOM_ID: {GENIE_ROOM_ID if 'GENIE_ROOM_ID' in globals() else 'NOT SET'}\n{'='*80}\n"
+        print(f"DEBUG: query_genie CALLED - Mode: {'MCP' if USE_MCP else 'Direct API'}", flush=True)
         print(f"DEBUG: Question: {question}", flush=True)
-        print(f"DEBUG: Is visualization request: {is_visualization_request}", flush=True)
-        print(f"DEBUG: Logging to: {debug_log_path}", flush=True)
-        print(f"{'='*80}", flush=True)
-        
-        # Also write to stderr (Streamlit might capture stdout)
-        print(f"DEBUG: query_genie CALLED - Question: {question}", file=sys.stderr, flush=True)
-        
-        # Then write to file
-        try:
-            with open(debug_log_path, "a", encoding='utf-8') as f:
-                f.write(log_entry)
-                f.flush()
-                try:
-                    os.fsync(f.fileno())  # Force OS-level flush
-                except:
-                    pass
-            print(f"DEBUG: Successfully wrote to {debug_log_path}", flush=True)
-        except Exception as e:
-            print(f"DEBUG: ERROR writing to debug log: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
-            # Continue anyway - don't let logging failure break the function
     else:
-        # Minimal logging in production
-        print(f"DEBUG: query_genie - {question[:50]}...", flush=True)
+        print(f"DEBUG: query_genie ({'MCP' if USE_MCP else 'Direct API'}) - {question[:50]}...", flush=True)
     
     try:
         if not GENIE_ROOM_ID:
@@ -758,181 +776,273 @@ To use Genie:
 
 Question asked: {question}"""
         
-        # Use Genie Conversation API
-        # Start a conversation in the space with the question as content
-        genie = w.genie
+        # Try MCP server first if enabled
+        if USE_MCP and _mcp_client:
+            return query_genie_via_mcp(question, is_visualization_request)
+        else:
+            # Fall back to direct Genie API
+            return query_genie_via_direct_api(question, is_visualization_request)
+    
+    except Exception as e:
+        error_msg = f"Genie API Error: {str(e)}\n\nPlease ensure:\n1. Genie space 'battery-trading-agent' exists\n2. GENIE_ROOM_ID is set correctly\n3. You have permissions to use the space\n4. Genie API is enabled in your workspace\n\nQuestion asked: {question}"
+        raise Exception(error_msg)
+
+def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
+    """Query Genie via MCP server"""
+    global chart_data, result_obj
+    
+    DEBUG_MODE = os.environ.get("DEBUG", "false").lower() == "true"
+    
+    try:
+        if DEBUG_MODE:
+            print(f"DEBUG: Using MCP server to query Genie")
         
-        # API signature: start_conversation(space_id: str, content: str) -> Wait[GenieMessage]
-        # Use positional arguments as shown in the signature
-        conversation_wait = genie.start_conversation(GENIE_ROOM_ID, question)
+        # Call Genie through MCP
+        # Note: Exact API depends on databricks-langchain implementation
+        # This is a placeholder that needs to be adjusted based on actual MCP server API
         
-        # OPTIMIZED: Use Wait object's built-in waiting mechanism instead of manual polling
-        # This is much faster than manual polling
-        message = None
-        try:
-            # Try to use Wait object's result() method
-            # Note: Wait.result() might not accept timeout parameter, so try without it first
-            if hasattr(conversation_wait, 'result'):
+        # Option 1: If MCP server exposes a tool for Genie queries
+        # The tool name and arguments may vary - check MCP server documentation
+        result = _mcp_client.call_tool(
+            tool_name="query_genie_space",  # Tool name from Genie MCP server
+            arguments={
+                "space_id": GENIE_ROOM_ID,
+                "question": question
+            }
+        )
+        
+        # MCP server should return formatted response
+        # Extract components if needed
+        genie_response = result.get("answer") or result.get("response") or str(result)
+        sql_query = result.get("sql") or result.get("query")
+        query_data = result.get("data") or result.get("results")
+        
+        # Handle chart creation if requested
+        if is_visualization_request and query_data:
+            columns = result.get("columns")
+            chart_data = create_plotly_chart(query_data, columns, question)
+        
+        # Format response
+        response_parts = []
+        if genie_response:
+            response_parts.append(f"🤖 **Databricks Genie Response:**\n\n{genie_response}")
+        
+        if sql_query:
+            response_parts.append(f"\n**Generated SQL:**\n```sql\n{sql_query}\n```")
+        
+        if query_data:
+            response_parts.append(f"\n**Query Results:**\n```\n{str(query_data)[:500]}\n```")
+        
+        response = "\n".join(response_parts)
+        
+        # Embed chart if created
+        if chart_data:
+            import json
+            chart_marker = f"\n\n[PLOTLY_CHART_START]\n{json.dumps(chart_data)}\n[PLOTLY_CHART_END]\n"
+            response += chart_marker
+        
+        return response
+        
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"DEBUG: MCP query failed: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Fall back to direct API if MCP fails
+        if DEBUG_MODE:
+            print(f"DEBUG: Falling back to direct Genie API")
+        return query_genie_via_direct_api(question, is_visualization_request)
+
+def query_genie_via_direct_api(question: str, is_visualization_request: bool) -> str:
+    """Query Genie via direct API (original implementation)"""
+    global chart_data, result_obj
+    
+    DEBUG_MODE = os.environ.get("DEBUG", "false").lower() == "true"
+    
+    # Use Genie Conversation API
+    # Start a conversation in the space with the question as content
+    genie = w.genie
+    
+    # API signature: start_conversation(space_id: str, content: str) -> Wait[GenieMessage]
+    # Use positional arguments as shown in the signature
+    conversation_wait = genie.start_conversation(GENIE_ROOM_ID, question)
+    
+    # OPTIMIZED: Use Wait object's built-in waiting mechanism instead of manual polling
+    # This is much faster than manual polling
+    message = None
+    try:
+        # Try to use Wait object's result() method
+        # Note: Wait.result() might not accept timeout parameter, so try without it first
+        if hasattr(conversation_wait, 'result'):
+            try:
+                # Try without timeout first
+                message = conversation_wait.result()
+            except TypeError:
+                # If it requires timeout, try with timedelta
                 try:
-                    # Try without timeout first
-                    message = conversation_wait.result()
-                except TypeError:
-                    # If it requires timeout, try with timedelta
-                    try:
-                        from datetime import timedelta
-                        message = conversation_wait.result(timeout=timedelta(seconds=60))
-                    except Exception as e:
+                    from datetime import timedelta
+                    message = conversation_wait.result(timeout=timedelta(seconds=60))
+                except Exception as e:
+                    if DEBUG_MODE:
                         print(f"DEBUG: Wait.result() failed: {e}")
-                        pass
-                except Exception as e:
+                    pass
+            except Exception as e:
+                if DEBUG_MODE:
                     print(f"DEBUG: Wait.result() failed or timed out: {e}")
-                    # Fall back to manual polling if Wait object doesn't work
-                    pass
-            
-            # If Wait object didn't work, try iterating (some Wait objects are iterable)
-            if not message and hasattr(conversation_wait, '__iter__'):
-                try:
-                    # Get the last message from iterator
-                    for msg in conversation_wait:
-                        message = msg
-                except Exception as e:
+                # Fall back to manual polling if Wait object doesn't work
+                pass
+        
+        # If Wait object didn't work, try iterating (some Wait objects are iterable)
+        if not message and hasattr(conversation_wait, '__iter__'):
+            try:
+                # Get the last message from iterator
+                for msg in conversation_wait:
+                    message = msg
+            except Exception as e:
+                if DEBUG_MODE:
                     print(f"DEBUG: Wait iteration failed: {e}")
-            
-            # If still no message, use it directly (might already be resolved)
-            if not message:
-                message = conversation_wait
-                
-        except Exception as e:
-            print(f"DEBUG: Error handling Wait object: {e}")
+        
+        # If still no message, use it directly (might already be resolved)
+        if not message:
             message = conversation_wait
-        
-        # Extract message ID to fetch detailed results FIRST
-        message_id = None
-        if hasattr(message, 'message_id'):
-            message_id = message.message_id
-        elif hasattr(message, 'id'):
-            message_id = message.id
-        elif isinstance(message, dict):
-            message_id = message.get('message_id') or message.get('id')
-        
-        # Also get conversation_id for listing messages
-        conversation_id = None
-        if hasattr(message, 'conversation_id'):
-            conversation_id = message.conversation_id
-        elif isinstance(message, dict):
-            conversation_id = message.get('conversation_id')
-        
-        # OPTIMIZED: Check message status only if Wait object didn't give us a completed message
-        # Most of the time, the Wait object will have already waited for completion
-        import time
-        if message_id and GENIE_ROOM_ID:
-            # Quick check: if message is already completed, skip polling
-            # Use try/except instead of hasattr because Databricks SDK raises KeyError
-            message_status = None
-            try:
-                message_status = message.status
-            except (AttributeError, KeyError):
-                try:
-                    if isinstance(message, dict):
-                        message_status = message.get('status')
-                except:
-                    pass
             
-            status_str = str(message_status) if message_status else ''
-            is_completed = False
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"DEBUG: Error handling Wait object: {e}")
+        message = conversation_wait
+    
+    # Extract message ID to fetch detailed results FIRST
+    message_id = None
+    if hasattr(message, 'message_id'):
+        message_id = message.message_id
+    elif hasattr(message, 'id'):
+        message_id = message.id
+    elif isinstance(message, dict):
+        message_id = message.get('message_id') or message.get('id')
+    
+    # Also get conversation_id for listing messages
+    conversation_id = None
+    if hasattr(message, 'conversation_id'):
+        conversation_id = message.conversation_id
+    elif isinstance(message, dict):
+        conversation_id = message.get('conversation_id')
+    
+    # OPTIMIZED: Check message status only if Wait object didn't give us a completed message
+    # Most of the time, the Wait object will have already waited for completion
+    import time
+    if message_id and GENIE_ROOM_ID:
+        # Quick check: if message is already completed, skip polling
+        # Use try/except instead of hasattr because Databricks SDK raises KeyError
+        message_status = None
+        try:
+            message_status = message.status
+        except (AttributeError, KeyError):
             try:
-                is_completed = (message_status in ['COMPLETED', 'FAILED', 'CANCELLED'] or 
-                              status_str in ['MessageStatus.COMPLETED', 'MessageStatus.FAILED', 'MessageStatus.CANCELLED'] or
-                              'COMPLETED' in status_str or 'FAILED' in status_str or 'CANCELLED' in status_str)
-            except Exception as e:
-                # If status comparison fails, assume not completed and continue
+                if isinstance(message, dict):
+                    message_status = message.get('status')
+            except:
+                pass
+        
+        status_str = str(message_status) if message_status else ''
+        is_completed = False
+        try:
+            is_completed = (message_status in ['COMPLETED', 'FAILED', 'CANCELLED'] or 
+                          status_str in ['MessageStatus.COMPLETED', 'MessageStatus.FAILED', 'MessageStatus.CANCELLED'] or
+                          'COMPLETED' in status_str or 'FAILED' in status_str or 'CANCELLED' in status_str)
+        except Exception as e:
+            # If status comparison fails, assume not completed and continue
+            if DEBUG_MODE:
                 print(f"DEBUG: Error checking status: {e}, message_status type: {type(message_status)}")
-                is_completed = False
+            is_completed = False
+        
+        if not is_completed:
+            # Only poll if message isn't already completed (fallback case)
+            # Use shorter, faster polling
+            max_poll_time = 30  # Reduced to 30 seconds
+            poll_interval = 1  # Start with 1 second
+            max_poll_interval = 3  # Max 3 seconds between polls
+            start_time = time.time()
+            poll_count = 0
             
-            if not is_completed:
-                # Only poll if message isn't already completed (fallback case)
-                # Use shorter, faster polling
-                max_poll_time = 30  # Reduced to 30 seconds
-                poll_interval = 1  # Start with 1 second
-                max_poll_interval = 3  # Max 3 seconds between polls
-                start_time = time.time()
-                poll_count = 0
-                
-                while time.time() - start_time < max_poll_time:
+            while time.time() - start_time < max_poll_time:
+                try:
+                    poll_count += 1
+                    message_details = genie.get_message(space_id=GENIE_ROOM_ID, conversation_id=conversation_id, message_id=message_id)
+                    
+                    # Use try/except instead of hasattr because Databricks SDK raises KeyError
+                    message_status = None
                     try:
-                        poll_count += 1
-                        message_details = genie.get_message(space_id=GENIE_ROOM_ID, conversation_id=conversation_id, message_id=message_id)
-                        
-                        # Use try/except instead of hasattr because Databricks SDK raises KeyError
-                        message_status = None
+                        message_status = message_details.status
+                    except (AttributeError, KeyError):
                         try:
-                            message_status = message_details.status
-                        except (AttributeError, KeyError):
-                            try:
-                                if isinstance(message_details, dict):
-                                    message_status = message_details.get('status')
-                            except:
-                                pass
-                        
-                        status_str = str(message_status) if message_status else ''
-                        is_completed = False
-                        try:
-                            is_completed = (message_status in ['COMPLETED', 'FAILED', 'CANCELLED'] or 
-                                          status_str in ['MessageStatus.COMPLETED', 'MessageStatus.FAILED', 'MessageStatus.CANCELLED'] or
-                                          'COMPLETED' in status_str or 'FAILED' in status_str or 'CANCELLED' in status_str)
-                        except Exception as e:
-                            print(f"DEBUG: Error checking status in poll: {e}, message_status type: {type(message_status)}")
-                            is_completed = False
-                        
-                        if is_completed:
-                            message = message_details
-                            print(f"DEBUG: Message completed after {poll_count} polls")
-                            break
-                        
-                        time.sleep(min(poll_interval, max_poll_interval))
-                        poll_interval = min(poll_interval * 1.2, max_poll_interval)  # Gentler backoff
+                            if isinstance(message_details, dict):
+                                message_status = message_details.get('status')
+                        except:
+                            pass
+                    
+                    status_str = str(message_status) if message_status else ''
+                    is_completed = False
+                    try:
+                        is_completed = (message_status in ['COMPLETED', 'FAILED', 'CANCELLED'] or 
+                                      status_str in ['MessageStatus.COMPLETED', 'MessageStatus.FAILED', 'MessageStatus.CANCELLED'] or
+                                      'COMPLETED' in status_str or 'FAILED' in status_str or 'CANCELLED' in status_str)
                     except Exception as e:
+                        if DEBUG_MODE:
+                            print(f"DEBUG: Error checking status in poll: {e}, message_status type: {type(message_status)}")
+                        is_completed = False
+                    
+                    if is_completed:
+                        message = message_details
+                        if DEBUG_MODE:
+                            print(f"DEBUG: Message completed after {poll_count} polls")
+                        break
+                    
+                    time.sleep(min(poll_interval, max_poll_interval))
+                    poll_interval = min(poll_interval * 1.2, max_poll_interval)  # Gentler backoff
+                except Exception as e:
+                    if DEBUG_MODE:
                         print(f"DEBUG: Error polling: {e}")
-                        time.sleep(1)
-        
-        # OPTIMIZED: Extract everything directly from the message returned by start_conversation
-        # The Wait object already returns the completed message with all attachments
-        # No need for list_conversation_messages or get_message calls
-        sql_query = None
-        genie_response = None
-        query_data = None
-        result_obj = None
-        
-        # Extract attachments directly from the message (this is where Genie's response is)
-        attachments = None
-        if hasattr(message, 'attachments'):
-            attachments = message.attachments
-        elif isinstance(message, dict):
-            attachments = message.get('attachments')
-        
-        # If we don't have attachments yet, try get_message as fallback (should rarely happen)
-        if not attachments and message_id and conversation_id and GENIE_ROOM_ID:
-            try:
-                message_details = genie.get_message(space_id=GENIE_ROOM_ID, conversation_id=conversation_id, message_id=message_id)
-                if hasattr(message_details, 'attachments'):
-                    attachments = message_details.attachments
-                elif isinstance(message_details, dict):
-                    attachments = message_details.get('attachments')
-                if DEBUG_MODE:
-                    print(f"DEBUG: Got attachments from get_message fallback: {len(attachments) if attachments else 0}")
-            except Exception as e:
-                if DEBUG_MODE:
-                    print(f"DEBUG: Error getting message details: {e}")
-        
-        # Extract response from attachments (per Genie API docs)
-        # According to docs: attachments array contains:
-        # - text: Generated text response (Genie's natural language answer)
-        # - query: Query statement if it exists
-        # - attachment_id: Identifier to get query results
-        # Reference: https://docs.databricks.com/aws/en/genie/conversation-api#-best-practices-for-using-the-genie-api
-        if attachments:
-            for attachment in attachments:
-                # PRIORITY 1: Extract text response - this is Genie's natural language answer
+                    time.sleep(1)
+    
+    # OPTIMIZED: Extract everything directly from the message returned by start_conversation
+    # The Wait object already returns the completed message with all attachments
+    # No need for list_conversation_messages or get_message calls
+    sql_query = None
+    genie_response = None
+    query_data = None
+    result_obj = None
+    
+    # Extract attachments directly from the message (this is where Genie's response is)
+    attachments = None
+    if hasattr(message, 'attachments'):
+        attachments = message.attachments
+    elif isinstance(message, dict):
+        attachments = message.get('attachments')
+    
+    # If we don't have attachments yet, try get_message as fallback (should rarely happen)
+    if not attachments and message_id and conversation_id and GENIE_ROOM_ID:
+        try:
+            message_details = genie.get_message(space_id=GENIE_ROOM_ID, conversation_id=conversation_id, message_id=message_id)
+            if hasattr(message_details, 'attachments'):
+                attachments = message_details.attachments
+            elif isinstance(message_details, dict):
+                attachments = message_details.get('attachments')
+            if DEBUG_MODE:
+                print(f"DEBUG: Got attachments from get_message fallback: {len(attachments) if attachments else 0}")
+        except Exception as e:
+            if DEBUG_MODE:
+                print(f"DEBUG: Error getting message details: {e}")
+    
+    # Extract response from attachments (per Genie API docs)
+    # According to docs: attachments array contains:
+    # - text: Generated text response (Genie's natural language answer)
+    # - query: Query statement if it exists
+    # - attachment_id: Identifier to get query results
+    # Reference: https://docs.databricks.com/aws/en/genie/conversation-api#-best-practices-for-using-the-genie-api
+    if attachments:
+        for attachment in attachments:
+            # PRIORITY 1: Extract text response - this is Genie's natural language answer
                 # Per docs: "The attachments array contains Genie's response. It includes the generated text response (text)"
                 # IMPORTANT: For text-only responses, text is a TextAttachment object with .content attribute
                 candidate_text = None
@@ -1007,17 +1117,21 @@ Question asked: {question}"""
                         statement_id = query_obj.get('statement_id')
                     elif hasattr(query_obj, 'statement_id'):
                         statement_id = query_obj.statement_id
-        
-        # Get query results using statement_id (after collecting from all attachments)
-        if statement_id and not query_data:
-            try:
-                if DEBUG_MODE:
-                    print(f"DEBUG: Fetching query results using statement_id: {statement_id}")
-                from databricks.sdk.service.sql import StatementState
-                result = w.statement_execution.get_statement(statement_id)
-                result_obj = result
-                
-                if result and result.status.state == StatementState.SUCCEEDED and result.result:
+    
+    # Get query results using statement_id (after collecting from all attachments)
+    statement_id = None  # Initialize if not set in loop
+    if 'statement_id' not in locals():
+        statement_id = None
+    
+    if statement_id and not query_data:
+        try:
+            if DEBUG_MODE:
+                print(f"DEBUG: Fetching query results using statement_id: {statement_id}")
+            from databricks.sdk.service.sql import StatementState
+            result = w.statement_execution.get_statement(statement_id)
+            result_obj = result
+            
+            if result and result.status.state == StatementState.SUCCEEDED and result.result:
                     if hasattr(result.result, 'data_array') and result.result.data_array:
                         query_data = result.result.data_array
                         
@@ -1064,13 +1178,13 @@ Question asked: {question}"""
                             for row in query_data:
                                 formatted_rows.append(" | ".join(str(val) for val in row))
                             genie_response = "\n".join(formatted_rows)
-            except Exception as e:
-                if DEBUG_MODE:
-                    print(f"DEBUG: Error getting query result: {e}")
-                pass
-        
-        # Fallback: Extract from message object directly
-        if not genie_response:
+        except Exception as e:
+            if DEBUG_MODE:
+                print(f"DEBUG: Error getting query result: {e}")
+            pass
+    
+    # Fallback: Extract from message object directly
+    if not genie_response:
             if hasattr(message, 'content'):
                 genie_response = message.content
             elif hasattr(message, 'answer'):
@@ -1080,8 +1194,8 @@ Question asked: {question}"""
             elif isinstance(message, dict):
                 genie_response = message.get('content') or message.get('answer') or message.get('text')
         
-        # Fallback: Try old method if attachments didn't work
-        if not genie_response or not sql_query:
+    # Fallback: Try old method if attachments didn't work
+    if not genie_response or not sql_query:
             # Try to get query result which contains SQL and data (legacy method)
             try:
                 query_result = genie.get_message_query_result(space_id=GENIE_ROOM_ID, message_id=message_id)
