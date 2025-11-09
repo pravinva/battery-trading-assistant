@@ -144,6 +144,7 @@ Please synthesize these results into a clear, coherent answer that:
 4. Explains concepts from documentation when helpful for understanding
 5. Uses proper formatting with spaces around numbers and currency (e.g., "$100 revenue", not "$100revenue")
 6. Maintains a professional, expert tone appropriate for Energy Australia operations
+7. **IMPORTANT: Cite the source of information** - When presenting data or numbers, add "(Data Analysis)" at the end of sentences that come from the data results. When presenting concepts, definitions, or explanations from documentation, add "(Documentation)" at the end of those sentences. You can cite multiple sources in a single sentence if it combines both.
 
 Do not include:
 - DEBUG information or debug markers
@@ -152,7 +153,12 @@ Do not include:
 - Page numbers, line numbers, or file paths from documentation
 - Technical implementation details unless relevant to the answer
 
-Provide a clean, synthesized answer that reads naturally:"""
+Citation format examples:
+- "RESS2 currently has a SoC of 82.7% (Data Analysis)."
+- "Throughput is calculated using the throughput_mwh field in the battery_telemetry table (Documentation)."
+- "The current SoC for RESS2 is 82.7% (Data Analysis), and throughput limits are enforced to prevent violations in the next 30 minutes (Documentation)."
+
+Provide a clean, synthesized answer with proper citations:"""
             
             self._log("🤖 Synthesizing response with LLM...")
             
