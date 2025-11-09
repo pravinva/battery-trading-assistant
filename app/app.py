@@ -927,8 +927,28 @@ if AGENT_AVAILABLE:
                     })
                     
                 except Exception as e:
+                    import traceback
+                    error_traceback = traceback.format_exc()
+                    
+                    # More detailed error message
                     error_msg = f"Sorry, I encountered an error: {str(e)}"
+                    
+                    # Show error in UI
                     st.error(error_msg)
+                    
+                    # Show full traceback in expander for debugging
+                    with st.expander("🔍 Error Details (Click to expand)", expanded=False):
+                        st.code(error_traceback, language='text')
+                        
+                        # Check for specific error types
+                        error_str = str(e).lower()
+                        if "broken pipe" in error_str or "errno 32" in error_str:
+                            st.info("💡 **Network Connection Issue**: This is typically a temporary network problem. Please try again in a few seconds.")
+                        elif "json" in error_str and ("local variable" in error_str or "not defined" in error_str):
+                            st.warning("💡 **Module Reload Issue**: Please refresh the page or restart Streamlit to reload the module.")
+                        elif "mcp" in error_str or "client" in error_str:
+                            st.info("💡 **MCP Client Issue**: Check that:\n- `databricks-mcp` is installed\n- MCP server is enabled in workspace\n- Genie MCP toggle is enabled in sidebar")
+                    
                     st.session_state.messages.append({
                         "role": "assistant",
                         "content": error_msg
