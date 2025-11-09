@@ -1043,9 +1043,9 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
     if attachments:
         for attachment in attachments:
             # PRIORITY 1: Extract text response - this is Genie's natural language answer
-                # Per docs: "The attachments array contains Genie's response. It includes the generated text response (text)"
-                # IMPORTANT: For text-only responses, text is a TextAttachment object with .content attribute
-                candidate_text = None
+            # Per docs: "The attachments array contains Genie's response. It includes the generated text response (text)"
+            # IMPORTANT: For text-only responses, text is a TextAttachment object with .content attribute
+            candidate_text = None
                 if hasattr(attachment, 'text'):
                     text_obj = attachment.text
                     # Check if it's a TextAttachment object (has .content attribute)
@@ -1132,7 +1132,7 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
             result_obj = result
             
             if result and result.status.state == StatementState.SUCCEEDED and result.result:
-                    if hasattr(result.result, 'data_array') and result.result.data_array:
+                if hasattr(result.result, 'data_array') and result.result.data_array:
                         query_data = result.result.data_array
                         
                         # Get column names for chart creation
@@ -1185,7 +1185,7 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
     
     # Fallback: Extract from message object directly
     if not genie_response:
-            if hasattr(message, 'content'):
+        if hasattr(message, 'content'):
                 genie_response = message.content
             elif hasattr(message, 'answer'):
                 genie_response = message.answer
@@ -1196,8 +1196,8 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
         
     # Fallback: Try old method if attachments didn't work
     if not genie_response or not sql_query:
-            # Try to get query result which contains SQL and data (legacy method)
-            try:
+        # Try to get query result which contains SQL and data (legacy method)
+        try:
                 query_result = genie.get_message_query_result(space_id=GENIE_ROOM_ID, message_id=message_id)
                 if DEBUG_MODE:
                     print(f"DEBUG: get_message_query_result (legacy) returned: {type(query_result)}")
