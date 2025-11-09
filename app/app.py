@@ -877,13 +877,19 @@ if AGENT_AVAILABLE:
                                         if 'question' in sql_result.get('args', {}):
                                             st.markdown(f"**Natural Language Question:** {sql_result['args']['question']}")
                                         
-                                        # Get execution logs from agent module
+                                        # Get execution logs from already-loaded agent module
                                         try:
-                                            agent_script_path = Path(__file__).parent.parent / "scripts" / "02_agent_development_local.py"
-                                            spec = importlib.util.spec_from_file_location("agent_module_logs", agent_script_path)
-                                            agent_module_logs = importlib.util.module_from_spec(spec)
-                                            spec.loader.exec_module(agent_module_logs)
-                                            if hasattr(agent_module_logs, 'get_genie_logs'):
+                                            # Access the already-loaded agent module
+                                            agent_module_logs = sys.modules.get('agent_module')
+                                            if not agent_module_logs:
+                                                # Try to find it by checking all modules
+                                                for mod_name, mod in sys.modules.items():
+                                                    if '02_agent' in mod_name or 'agent_module' in mod_name:
+                                                        if hasattr(mod, 'get_genie_logs'):
+                                                            agent_module_logs = mod
+                                                            break
+                                            
+                                            if agent_module_logs and hasattr(agent_module_logs, 'get_genie_logs'):
                                                 logs = agent_module_logs.get_genie_logs()
                                                 if logs:
                                                     with st.expander("📋 Execution Logs (MCP vs Direct API)", expanded=True):
