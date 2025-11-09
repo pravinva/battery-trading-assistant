@@ -1581,6 +1581,11 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
         if candidate_content and candidate_content != question and len(candidate_content) > len(question) + 10:
             genie_response = candidate_content
         
+    # Initialize response_parts BEFORE any conditional blocks
+    # Format the response with SQL and results
+    # Prioritize Genie's answer - it contains the actual formatted answer with numbers
+    response_parts = []
+    
     # Fallback: Try old method if attachments didn't work
     if not genie_response or not sql_query:
         # Try to get query result which contains SQL and data (legacy method)
@@ -1670,10 +1675,6 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
                         query_data = exec_result.result
             except Exception:
                 pass
-        
-        # Format the response with SQL and results
-        # Prioritize Genie's answer - it contains the actual formatted answer with numbers
-        response_parts = []
         
         # chart_data is already initialized at function start
         chart_type = None
@@ -1785,6 +1786,8 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
             if not has_valid_answer and not sql_query:
                 # Check if Genie just echoed the question back (common when it can't process)
                 if genie_response == question or (genie_response and len(genie_response) <= len(question) + 5):
+                    if DEBUG_MODE:
+                        print(f"DEBUG: Genie returned question unchanged: genie_response='{genie_response}', question='{question}'")
                     if is_metadata_query:
                         # Metadata query failed - provide helpful error
                         error_msg = f"""Genie Error: Genie did not process the metadata question and returned it unchanged.
@@ -1875,6 +1878,8 @@ Please check the Genie UI for the actual answer. The agent cannot proceed withou
         
         # If we still don't have a valid answer after all checks, fail
         if not response_parts and not has_valid_answer:
+            if DEBUG_MODE:
+                print(f"DEBUG: No valid answer found. genie_response='{genie_response}', sql_query={bool(sql_query)}, query_data={bool(query_data)}, has_valid_answer={has_valid_answer}, response_parts={len(response_parts)}")
             error_msg = f"""Genie Error: No valid answer extracted from Genie.
 
 Question: {question}
