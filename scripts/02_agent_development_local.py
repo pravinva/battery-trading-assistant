@@ -811,7 +811,6 @@ def query_genie(
     
     # Initialize debug log - OPTIMIZED: Only write if DEBUG env var is set
     debug_log_path = "/tmp/genie_debug.log"
-    import json
     import time
     import sys
     
