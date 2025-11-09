@@ -19,6 +19,11 @@ langchain-text-splitters>=0.0.1
 # Based on: https://docs.databricks.com/aws/en/generative-ai/mcp/managed-mcp
 databricks-mcp>=0.4.0
 
+# Databricks AI Bridge for Multi-Agent Supervisor
+# Based on: https://github.com/databricks/databricks-ai-bridge
+# For LangChain/LangGraph users (recommended)
+databricks-langchain>=0.1.0
+
 # PDF processing
 pypdf>=3.17.0
 
