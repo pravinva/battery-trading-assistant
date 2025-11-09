@@ -15,6 +15,11 @@ langchain-core>=0.1.0
 langgraph>=0.0.20
 langchain-text-splitters>=0.0.1
 
+# Databricks AI Bridge for MCP integration (experimental branch)
+# databricks-langchain>=0.1.0  # Uncomment when ready to test MCP
+# Or install from source:
+# pip install git+https://github.com/databricks/databricks-ai-bridge.git#subdirectory=integrations/langchain
+
 # PDF processing
 pypdf>=3.17.0
 
