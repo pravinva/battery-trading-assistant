@@ -1226,6 +1226,10 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
     """Query Genie via direct API (original implementation)"""
     global chart_data, result_obj
     
+    # Initialize chart_data to None at function start
+    chart_data = None
+    result_obj = None
+    
     DEBUG_MODE = os.environ.get("DEBUG", "false").lower() == "true"
     
     add_genie_log(f"📡 Starting Genie conversation via Direct API")
@@ -2006,6 +2010,12 @@ The agent cannot proceed without Genie's answer."""
         
         if DEBUG_MODE:
             print(f"DEBUG: Final response length: {len(response)}, contains chart markers: {'PLOTLY_CHART_START' in response}")
+        
+        # CRITICAL: Ensure we always return a string, never None
+        if not response:
+            response = "Error: Empty response generated. Please check Genie API logs."
+            if DEBUG_MODE:
+                print(f"DEBUG: WARNING - response was empty, using fallback")
         
         return response
 
