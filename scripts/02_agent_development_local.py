@@ -38,6 +38,7 @@ except ImportError:
 from langchain_core.tools import tool
 from typing import Annotated
 import os
+import json
 
 # Configuration
 CATALOG = "ea_trading"
