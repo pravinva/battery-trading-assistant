@@ -880,9 +880,22 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
         
         # Discover available tools from MCP server
         add_genie_log(f"🔍 Discovering MCP tools from server...")
-        tools = _mcp_client.list_tools()
-        tool_names = [t.name for t in tools]
-        add_genie_log(f"✅ Found {len(tools)} MCP tools: {', '.join(tool_names)}")
+        try:
+            tools = _mcp_client.list_tools()
+            tool_names = [t.name for t in tools]
+            add_genie_log(f"✅ Found {len(tools)} MCP tools: {', '.join(tool_names)}")
+        except (ConnectionError, OSError) as e:
+            # Check if it's a broken pipe error
+            error_str = str(e).lower()
+            if "broken pipe" in error_str or "errno 32" in error_str:
+                add_genie_log(f"❌ Network error (broken pipe) discovering tools: {e}")
+                raise Exception(f"Network connection lost while discovering MCP tools: {e}. Please check your connection and try again.")
+            else:
+                add_genie_log(f"❌ Network error discovering tools: {e}")
+                raise Exception(f"Network error connecting to MCP server: {e}. Please check your connection and try again.")
+        except Exception as e:
+            add_genie_log(f"❌ Error discovering tools: {e}")
+            raise
         
         if DEBUG_MODE:
             print(f"DEBUG: Using MCP server to query Genie")
@@ -927,9 +940,15 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
         try:
             result = _mcp_client.call_tool(genie_tool.name, tool_args)
             add_genie_log(f"✅ MCP tool call successful")
-        except (ConnectionError, OSError, BrokenPipeError) as e:
-            add_genie_log(f"❌ Network error calling MCP tool: {e}")
-            raise Exception(f"Network error calling MCP tool: {e}. This may be a temporary connection issue. Please try again.")
+        except (ConnectionError, OSError) as e:
+            # Check if it's a broken pipe error
+            error_str = str(e).lower()
+            if "broken pipe" in error_str or "errno 32" in error_str:
+                add_genie_log(f"❌ Network error (broken pipe) calling MCP tool: {e}")
+                raise Exception(f"Network connection lost while calling MCP tool: {e}. This may be a temporary connection issue. Please try again.")
+            else:
+                add_genie_log(f"❌ Network error calling MCP tool: {e}")
+                raise Exception(f"Network error calling MCP tool: {e}. This may be a temporary connection issue. Please try again.")
         except Exception as e:
             add_genie_log(f"❌ Error calling MCP tool: {e}")
             raise
