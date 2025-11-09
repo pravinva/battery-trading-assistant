@@ -921,11 +921,18 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
         if DEBUG_MODE:
             print(f"DEBUG: Calling tool with args: {tool_args}")
         
-        # Call the tool
+        # Call the tool with retry logic for network errors
         add_genie_log(f"📞 Calling MCP tool: {genie_tool.name}")
         add_genie_log(f"📋 Tool arguments: {str(tool_args)}")
-        result = _mcp_client.call_tool(genie_tool.name, tool_args)
-        add_genie_log(f"✅ MCP tool call successful")
+        try:
+            result = _mcp_client.call_tool(genie_tool.name, tool_args)
+            add_genie_log(f"✅ MCP tool call successful")
+        except (ConnectionError, OSError, BrokenPipeError) as e:
+            add_genie_log(f"❌ Network error calling MCP tool: {e}")
+            raise Exception(f"Network error calling MCP tool: {e}. This may be a temporary connection issue. Please try again.")
+        except Exception as e:
+            add_genie_log(f"❌ Error calling MCP tool: {e}")
+            raise
         
         if DEBUG_MODE:
             print(f"DEBUG: MCP tool result type: {type(result)}")
@@ -1148,8 +1155,24 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
         import traceback
         error_traceback = traceback.format_exc()
         
-        # Check if it's a json scoping error
-        if "json" in str(e).lower() and ("local variable" in str(e).lower() or "not defined" in str(e).lower()):
+        # Check for specific error types
+        error_str = str(e).lower()
+        
+        # Network/connection errors
+        if "broken pipe" in error_str or "errno 32" in error_str or "connection" in error_str or "timeout" in error_str:
+            error_msg = (
+                f"Genie MCP Error: Network connection issue\n\n"
+                f"Error: {str(e)}\n\n"
+                f"This is typically a temporary network issue. Please try:\n"
+                f"1. Check your internet connection\n"
+                f"2. Verify Databricks workspace is accessible\n"
+                f"3. Retry the query after a few seconds\n"
+                f"4. Check if MCP server is still enabled in workspace\n\n"
+                f"MCP Server URL: {_mcp_server_url}\n"
+                f"Question asked: {question}"
+            )
+        # JSON scoping errors
+        elif "json" in error_str and ("local variable" in error_str or "not defined" in error_str):
             error_msg = (
                 f"Genie MCP Error: JSON scoping issue detected\n\n"
                 f"Error: {str(e)}\n\n"
@@ -1158,6 +1181,7 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
                 f"Please restart Streamlit to reload the module.\n\n"
                 f"Question asked: {question}"
             )
+        # Other errors
         else:
             error_msg = (
                 f"Genie MCP Error: {str(e)}\n\n"
