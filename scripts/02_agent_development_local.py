@@ -2,7 +2,6 @@
 """
 Battery Trading Agent Development - Local Execution
 Run this script locally to build and test the agent
-Supports both MCP server and direct Genie API approaches
 """
 
 import warnings
@@ -17,14 +16,14 @@ import mlflow
 import threading
 from databricks.sdk import WorkspaceClient
 
-# Try to import MCP client - fallback if not available
-# Based on: https://docs.databricks.com/aws/en/generative-ai/mcp/managed-mcp
+# Try to import MCP client - optional, falls back to direct API if not available
 try:
     from databricks_mcp import DatabricksMCPClient
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
     print("⚠️  databricks-mcp not installed. Install with: pip install databricks-mcp")
+    print("   Will use direct Genie API instead.")
 
 try:
     from databricks_langchain import ChatDatabricks
@@ -38,8 +37,6 @@ except ImportError:
 from langchain_core.tools import tool
 from typing import Annotated
 import os
-import json
-from json import JSONDecodeError
 
 # Configuration
 CATALOG = "ea_trading"
@@ -57,7 +54,7 @@ if not GENIE_ROOM_ID:
     GENIE_ROOM_ID = "01f0bca10415147a91fe3c98f80e596e"  # Battery Trading Agent space
 
 # MCP Configuration
-USE_MCP = os.environ.get("USE_GENIE_MCP", "false").lower() == "true"
+USE_GENIE_MCP = os.environ.get("USE_GENIE_MCP", "false").lower() == "true"
 GENIE_MCP_SERVER_URL = os.environ.get("GENIE_MCP_SERVER_URL", None)
 
 # Initialize clients
@@ -70,7 +67,7 @@ vsc = VectorSearchClient(disable_notice=True)
 _mcp_client = None
 _mcp_server_url = None
 
-if MCP_AVAILABLE and USE_MCP:
+if MCP_AVAILABLE and USE_GENIE_MCP:
     try:
         # Get workspace hostname for MCP server URL
         workspace_hostname = w.config.host
@@ -98,29 +95,11 @@ if MCP_AVAILABLE and USE_MCP:
             
     except Exception as e:
         print(f"❌ Failed to initialize MCP client: {e}")
-        print("   Pure MCP mode requires successful MCP client initialization")
-        raise Exception(
-            f"Failed to initialize Genie MCP client: {e}\n\n"
-            f"Please ensure:\n"
-            f"1. MCP server is enabled in workspace (Agents → MCP Servers)\n"
-            f"2. Genie MCP server is available\n"
-            f"3. Genie space ID is correct: {GENIE_ROOM_ID}\n"
-            f"4. You have permissions to use the MCP server\n"
-            f"5. Workspace hostname: {workspace_hostname}\n"
-            f"6. MCP Server URL: {_mcp_server_url if '_mcp_server_url' in locals() else 'N/A'}\n\n"
-            f"If you want to use direct Genie API instead, set USE_GENIE_MCP=false"
-        )
-elif USE_MCP and not MCP_AVAILABLE:
-    print("❌ USE_GENIE_MCP=true but databricks-mcp not installed")
-    print("   Install with: pip install databricks-mcp")
-    print("   Pure MCP mode requires databricks-mcp - cannot fall back to direct API")
-    raise ImportError(
-        "databricks-mcp is required for MCP mode. "
-        "Install with: pip install databricks-mcp\n"
-        "Or disable MCP mode by setting USE_GENIE_MCP=false"
-    )
+        print("   Falling back to direct Genie API")
+        _mcp_client = None
+        USE_GENIE_MCP = False
 
-if USE_MCP:
+if USE_GENIE_MCP:
     print("🔌 Using Genie MCP server for queries")
 else:
     print("🔌 Using direct Genie API for queries")
@@ -799,10 +778,7 @@ def query_genie(
     - battery_assets: Asset specifications
     - battery_documents: Document metadata
     
-    Returns Genie's response with query results.
-    
-    Pure MCP implementation when USE_GENIE_MCP=true (no fallback to direct API).
-    Uses direct Genie API when USE_GENIE_MCP=false."""
+    Returns Genie's response with query results."""
     
     # Check if this query should have a visualization - ONLY if explicitly requested
     import re
@@ -816,6 +792,7 @@ def query_genie(
     
     # Initialize debug log - OPTIMIZED: Only write if DEBUG env var is set
     debug_log_path = "/tmp/genie_debug.log"
+    import json
     import time
     import sys
     
@@ -823,11 +800,38 @@ def query_genie(
     DEBUG_MODE = os.environ.get("DEBUG", "false").lower() == "true"
     
     if DEBUG_MODE:
-        log_entry = f"\n{'='*80}\nNEW QUERY_GENIE CALL - {time.strftime('%Y-%m-%d %H:%M:%S')}\nQuestion: {question}\nMode: {'MCP' if USE_MCP else 'Direct API'}\nGENIE_ROOM_ID: {GENIE_ROOM_ID if 'GENIE_ROOM_ID' in globals() else 'NOT SET'}\n{'='*80}\n"
-        print(f"DEBUG: query_genie CALLED - Mode: {'MCP' if USE_MCP else 'Direct API'}", flush=True)
+        # Write immediately with force flush
+        log_entry = f"\n{'='*80}\nNEW QUERY_GENIE CALL - {time.strftime('%Y-%m-%d %H:%M:%S')}\nQuestion: {question}\nGENIE_ROOM_ID: {GENIE_ROOM_ID if 'GENIE_ROOM_ID' in globals() else 'NOT SET'}\n{'='*80}\n"
+        
+        # Print to console FIRST (this always works)
+        print(f"\n{'='*80}", flush=True)
+        print(f"DEBUG: query_genie CALLED", flush=True)
         print(f"DEBUG: Question: {question}", flush=True)
+        print(f"DEBUG: Is visualization request: {is_visualization_request}", flush=True)
+        print(f"DEBUG: Logging to: {debug_log_path}", flush=True)
+        print(f"{'='*80}", flush=True)
+        
+        # Also write to stderr (Streamlit might capture stdout)
+        print(f"DEBUG: query_genie CALLED - Question: {question}", file=sys.stderr, flush=True)
+        
+        # Then write to file
+        try:
+            with open(debug_log_path, "a", encoding='utf-8') as f:
+                f.write(log_entry)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())  # Force OS-level flush
+                except:
+                    pass
+            print(f"DEBUG: Successfully wrote to {debug_log_path}", flush=True)
+        except Exception as e:
+            print(f"DEBUG: ERROR writing to debug log: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            # Continue anyway - don't let logging failure break the function
     else:
-        print(f"DEBUG: query_genie ({'MCP' if USE_MCP else 'Direct API'}) - {question[:50]}...", flush=True)
+        # Minimal logging in production
+        print(f"DEBUG: query_genie - {question[:50]}...", flush=True)
     
     try:
         if not GENIE_ROOM_ID:
@@ -840,19 +844,12 @@ To use Genie:
 
 Question asked: {question}"""
         
-        # Pure MCP implementation - no fallback
-        if USE_MCP:
-            if not _mcp_client:
-                raise Exception(
-                    f"MCP client not initialized. Please ensure:\n"
-                    f"1. databricks-mcp is installed: pip install databricks-mcp\n"
-                    f"2. MCP server is enabled in workspace (Agents → MCP Servers)\n"
-                    f"3. Genie space ID is correct: {GENIE_ROOM_ID}\n"
-                    f"4. You have permissions to use the MCP server"
-                )
+        # Route to MCP or Direct API based on configuration
+        if USE_GENIE_MCP and _mcp_client:
+            add_genie_log(f"🔌 Routing to Genie MCP server")
             return query_genie_via_mcp(question, is_visualization_request)
         else:
-            # Direct Genie API (when MCP is not enabled)
+            add_genie_log(f"🔌 Routing to Direct Genie API")
             return query_genie_via_direct_api(question, is_visualization_request)
     
     except Exception as e:
@@ -866,7 +863,6 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
     Genie MCP server exposes tools that can be discovered via list_tools()
     """
     # Import json at function start to ensure it's always available
-    # This prevents scoping issues when json is used in exception handlers
     import json as json_module
     
     DEBUG_MODE = os.environ.get("DEBUG", "false").lower() == "true"
@@ -889,7 +885,6 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
             tool_names = [t.name for t in tools]
             add_genie_log(f"✅ Found {len(tools)} MCP tools: {', '.join(tool_names)}")
         except (ConnectionError, OSError) as e:
-            # Check if it's a broken pipe error
             error_str = str(e).lower()
             if "broken pipe" in error_str or "errno 32" in error_str:
                 add_genie_log(f"❌ Network error (broken pipe) discovering tools: {e}")
@@ -901,260 +896,55 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
             add_genie_log(f"❌ Error discovering tools: {e}")
             raise
         
-        if DEBUG_MODE:
-            print(f"DEBUG: Using MCP server to query Genie")
-            print(f"DEBUG: MCP Server URL: {_mcp_server_url}")
-            print(f"DEBUG: Available MCP tools: {tool_names}")
-        
         # Find the Genie query tool
-        # Tool name pattern: query_space_{genie_space_id}
         genie_tool = None
-        expected_tool_name = f"query_space_{GENIE_ROOM_ID}"
-        
         for tool in tools:
-            if tool.name == expected_tool_name or tool.name.startswith("query_space_"):
+            if "query" in tool.name.lower() or tool.name.startswith("query_space_"):
                 genie_tool = tool
                 break
         
         if not genie_tool:
-            # Fallback: look for any tool with "query" in the name
-            for tool in tools:
-                if "query" in tool.name.lower():
-                    genie_tool = tool
-                    break
-        
-        if not genie_tool:
             raise Exception(f"No Genie query tool found. Available tools: {[t.name for t in tools]}")
         
-        if DEBUG_MODE:
-            print(f"DEBUG: Using tool: {genie_tool.name}")
-            print(f"DEBUG: Tool description: {genie_tool.description}")
-            print(f"DEBUG: Tool input schema: {genie_tool.inputSchema}")
-        
         # Call the Genie tool via MCP
-        # Based on discovery, the tool expects: {"query": "..."} and optionally {"conversation_id": "..."}
         tool_args = {"query": question}
         
-        if DEBUG_MODE:
-            print(f"DEBUG: Calling tool with args: {tool_args}")
-        
-        # Call the tool with retry logic for network errors
         add_genie_log(f"📞 Calling MCP tool: {genie_tool.name}")
         add_genie_log(f"📋 Tool arguments: {str(tool_args)}")
         try:
             result = _mcp_client.call_tool(genie_tool.name, tool_args)
             add_genie_log(f"✅ MCP tool call successful")
         except (ConnectionError, OSError) as e:
-            # Check if it's a broken pipe error
             error_str = str(e).lower()
             if "broken pipe" in error_str or "errno 32" in error_str:
                 add_genie_log(f"❌ Network error (broken pipe) calling MCP tool: {e}")
-                raise Exception(f"Network connection lost while calling MCP tool: {e}. This may be a temporary connection issue. Please try again.")
+                raise Exception(f"Network connection lost while calling MCP tool: {e}. Please try again.")
             else:
                 add_genie_log(f"❌ Network error calling MCP tool: {e}")
-                raise Exception(f"Network error calling MCP tool: {e}. This may be a temporary connection issue. Please try again.")
+                raise Exception(f"Network error calling MCP tool: {e}. Please try again.")
         except Exception as e:
             add_genie_log(f"❌ Error calling MCP tool: {e}")
             raise
         
-        if DEBUG_MODE:
-            print(f"DEBUG: MCP tool result type: {type(result)}")
-            print(f"DEBUG: MCP tool result: {str(result)[:500]}")
-        
         # Extract response from MCP result
-        # MCP tools return CallToolResult with .content attribute (list of TextContent)
-        conversation_id = None
-        message_id = None
-        columns = None  # Initialize columns at function level
-        
-        if hasattr(result, 'content'):
-            # CallToolResult object with content list
+        if hasattr(result, 'content') and result.content:
             content_list = result.content
             if content_list and len(content_list) > 0:
-                # Get first text content
                 first_content = content_list[0]
                 if hasattr(first_content, 'text'):
                     content_text = first_content.text
-                    if DEBUG_MODE:
-                        print(f"DEBUG: Content text type: {type(content_text)}")
-                        print(f"DEBUG: Content text preview: {content_text[:200]}")
-                    
-                    # Parse JSON response from Genie MCP server
                     try:
                         parsed = json_module.loads(content_text)
-                        if DEBUG_MODE:
-                            print(f"DEBUG: Parsed JSON keys: {list(parsed.keys()) if isinstance(parsed, dict) else 'Not a dict'}")
-                        
                         if isinstance(parsed, dict):
-                            # Extract conversation metadata first
-                            conversation_id = parsed.get("conversationId") or parsed.get("conversation_id")
-                            message_id = parsed.get("messageId") or parsed.get("message_id")
-                            
-                            # The "content" field is a JSON string that needs to be parsed again
-                            content_json_str = parsed.get("content")
-                            if content_json_str and isinstance(content_json_str, str):
-                                try:
-                                    # Parse the nested JSON content
-                                    content_parsed = json_module.loads(content_json_str)
-                                    if isinstance(content_parsed, dict):
-                                        # Extract SQL query
-                                        sql_query = content_parsed.get("query") or content_parsed.get("sql")
-                                        
-                                        # Extract query results from statement_response
-                                        statement_response = content_parsed.get("statement_response")
-                                        if statement_response and isinstance(statement_response, dict):
-                                            # Get SQL query if not already extracted
-                                            if not sql_query:
-                                                sql_query = statement_response.get("query")
-                                            
-                                            # Extract result data
-                                            result_obj = statement_response.get("result")
-                                            if result_obj and isinstance(result_obj, dict):
-                                                data_array = result_obj.get("data_array")
-                                                if data_array:
-                                                    # Convert data_array to list of lists/values
-                                                    query_data = []
-                                                    for row in data_array:
-                                                        if isinstance(row, dict) and "values" in row:
-                                                            # Extract values from row structure
-                                                            row_values = []
-                                                            for val_obj in row["values"]:
-                                                                # Extract the actual value (could be string_value, int_value, etc.)
-                                                                if isinstance(val_obj, dict):
-                                                                    # Get first non-None value
-                                                                    row_values.append(
-                                                                        val_obj.get("string_value") or 
-                                                                        val_obj.get("int_value") or 
-                                                                        val_obj.get("double_value") or 
-                                                                        val_obj.get("bool_value") or
-                                                                        val_obj.get("timestamp_value") or
-                                                                        None
-                                                                    )
-                                                                else:
-                                                                    row_values.append(val_obj)
-                                                            query_data.append(row_values)
-                                                        else:
-                                                            query_data.append(row)
-                                                    
-                                                    # Get column names from manifest
-                                                    manifest = statement_response.get("manifest")
-                                                    if manifest and isinstance(manifest, dict):
-                                                        schema = manifest.get("schema")
-                                                        if schema and isinstance(schema, dict):
-                                                            columns = [col.get("name") for col in schema.get("columns", [])]
-                                                            if columns and query_data:
-                                                                # Convert to list of dicts for easier processing
-                                                                query_data_dicts = []
-                                                                for row in query_data:
-                                                                    query_data_dicts.append(dict(zip(columns, row)))
-                                                                query_data = query_data_dicts
-                                    
-                                    # Extract natural language response (if any) - usually not present in MCP response
-                                    genie_response = content_parsed.get("content") or content_parsed.get("answer") or content_parsed.get("response")
-                                    
-                                    # If no genie_response but we have query results, format them
-                                    if not genie_response and query_data:
-                                        if isinstance(query_data, list) and len(query_data) > 0:
-                                            if isinstance(query_data[0], dict):
-                                                # Format as table
-                                                formatted_rows = []
-                                                if columns:
-                                                    formatted_rows.append(" | ".join(columns))
-                                                    formatted_rows.append(" | ".join(["---"] * len(columns)))
-                                                for row in query_data:
-                                                    formatted_rows.append(" | ".join(str(val) for val in row.values()))
-                                                genie_response = "\n".join(formatted_rows)
-                                            else:
-                                                genie_response = str(query_data)
-                                    
-                                    # If still no response but we have SQL, create a simple response
-                                    if not genie_response and sql_query:
-                                        genie_response = f"Query executed successfully. Results: {str(query_data) if query_data else 'No data returned'}"
-                                except JSONDecodeError as e:
-                                    if DEBUG_MODE:
-                                        print(f"DEBUG: Failed to parse nested content JSON: {e}")
-                                    # Use the content string as-is
-                                    genie_response = content_json_str
-                            else:
-                                # No content field or not a string, try to get response from outer level
-                                genie_response = parsed.get("content") or parsed.get("answer") or parsed.get("response")
-                            
-                            # Final fallback: format query results if we have them
-                            if not genie_response and query_data:
-                                if isinstance(query_data, list) and len(query_data) > 0:
-                                    if isinstance(query_data[0], dict):
-                                        # Format as table
-                                        formatted_rows = []
-                                        if columns:
-                                            formatted_rows.append(" | ".join(columns))
-                                            formatted_rows.append(" | ".join(["---"] * len(columns)))
-                                        for row in query_data:
-                                            formatted_rows.append(" | ".join(str(val) for val in row.values()))
-                                        genie_response = "\n".join(formatted_rows)
-                                    else:
-                                        genie_response = str(query_data)
-                            
-                            # Last resort: create response from SQL
-                            if not genie_response and sql_query:
-                                genie_response = f"Query executed successfully. Results: {str(query_data) if query_data else 'No data returned'}"
-                    except JSONDecodeError:
-                        # If not JSON, use as plain text
+                            genie_response = parsed.get("content") or parsed.get("answer") or parsed.get("response")
+                            sql_query = parsed.get("query") or parsed.get("sql")
+                            query_data = parsed.get("data") or parsed.get("results")
+                    except json_module.JSONDecodeError:
                         genie_response = content_text
-                elif isinstance(first_content, str):
-                    genie_response = first_content
-        elif isinstance(result, dict):
-            genie_response = result.get("content") or result.get("answer") or result.get("response") or str(result)
-            sql_query = result.get("sql") or result.get("query")
-            query_data = result.get("data") or result.get("results")
-            conversation_id = result.get("conversationId") or result.get("conversation_id")
-            message_id = result.get("messageId") or result.get("message_id")
-        else:
-            genie_response = str(result)
-        
-        # If response indicates message is not complete, poll for completion
-        # Check if we need to poll (message might be in progress)
-        if conversation_id and message_id and not genie_response:
-            # Try to find polling tool
-            poll_tool = None
-            poll_tool_name = f"poll_response_{GENIE_ROOM_ID}"
-            for tool in tools:
-                if tool.name == poll_tool_name or tool.name.startswith("poll_response_"):
-                    poll_tool = tool
-                    break
-            
-            if poll_tool:
-                if DEBUG_MODE:
-                    print(f"DEBUG: Polling for message completion using {poll_tool.name}")
-                try:
-                    poll_result = _mcp_client.call_tool(
-                        poll_tool.name,
-                        {"conversation_id": conversation_id, "message_id": message_id}
-                    )
-                    if hasattr(poll_result, 'content') and poll_result.content:
-                        poll_content = poll_result.content[0]
-                        if hasattr(poll_content, 'text'):
-                            try:
-                                parsed = json_module.loads(poll_content.text)
-                                genie_response = parsed.get("content") or parsed.get("answer") or parsed.get("response")
-                            except:
-                                genie_response = poll_content.text
-                except Exception as e:
-                    if DEBUG_MODE:
-                        print(f"DEBUG: Polling failed: {e}")
-        
-        # Handle chart creation if requested
-        if is_visualization_request and query_data:
-            columns_list = None
-            # Try to get columns from the parsed data structure
-            if isinstance(query_data, list) and len(query_data) > 0:
-                if isinstance(query_data[0], dict):
-                    columns_list = list(query_data[0].keys())
-            chart_data = create_plotly_chart(query_data, columns_list, question)
         
         # Format response
         response_parts = []
         if genie_response:
-            # Format the text to ensure proper spacing
             formatted_response = format_response_text(genie_response)
             response_parts.append(f"🤖 **Databricks Genie Response (via MCP):**\n\n{formatted_response}")
         
@@ -1174,52 +964,18 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
         return response
         
     except Exception as e:
-        # Pure MCP implementation - raise error instead of falling back
         import traceback
         error_traceback = traceback.format_exc()
-        
-        # Check for specific error types
-        error_str = str(e).lower()
-        
-        # Network/connection errors
-        if "broken pipe" in error_str or "errno 32" in error_str or "connection" in error_str or "timeout" in error_str:
-            error_msg = (
-                f"Genie MCP Error: Network connection issue\n\n"
-                f"Error: {str(e)}\n\n"
-                f"This is typically a temporary network issue. Please try:\n"
-                f"1. Check your internet connection\n"
-                f"2. Verify Databricks workspace is accessible\n"
-                f"3. Retry the query after a few seconds\n"
-                f"4. Check if MCP server is still enabled in workspace\n\n"
-                f"MCP Server URL: {_mcp_server_url}\n"
-                f"Question asked: {question}"
-            )
-        # JSON scoping errors
-        elif "json" in error_str and ("local variable" in error_str or "not defined" in error_str):
-            error_msg = (
-                f"Genie MCP Error: JSON scoping issue detected\n\n"
-                f"Error: {str(e)}\n\n"
-                f"Full traceback:\n{error_traceback}\n\n"
-                f"This is a code issue - json_module should be imported at function start.\n"
-                f"Please restart Streamlit to reload the module.\n\n"
-                f"Question asked: {question}"
-            )
-        # Other errors
-        else:
-            error_msg = (
-                f"Genie MCP Error: {str(e)}\n\n"
-                f"Full traceback:\n{error_traceback}\n\n"
-                f"Please ensure:\n"
-                f"1. MCP server is enabled in workspace (Agents → MCP Servers)\n"
-                f"2. Genie MCP server is available and accessible\n"
-                f"3. Genie space ID is correct: {GENIE_ROOM_ID}\n"
-                f"4. You have permissions to use the MCP server\n"
-                f"5. MCP Server URL: {_mcp_server_url}\n\n"
-                f"Question asked: {question}"
-            )
-        if DEBUG_MODE:
-            print(f"DEBUG: MCP query failed: {e}")
-            print(error_traceback)
+        error_msg = (
+            f"Genie MCP Error: {str(e)}\n\n"
+            f"Please ensure:\n"
+            f"1. MCP server is enabled in workspace (Agents → MCP Servers)\n"
+            f"2. Genie MCP server is available and accessible\n"
+            f"3. Genie space ID is correct: {GENIE_ROOM_ID}\n"
+            f"4. You have permissions to use the MCP server\n"
+            f"5. MCP Server URL: {_mcp_server_url}\n\n"
+            f"Question asked: {question}"
+        )
         raise Exception(error_msg)
 
 def query_genie_via_direct_api(question: str, is_visualization_request: bool) -> str:
@@ -1235,214 +991,208 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
     add_genie_log(f"📡 Starting Genie conversation via Direct API")
     add_genie_log(f"🏠 Genie Space ID: {GENIE_ROOM_ID}")
     
-    # Use Genie Conversation API
-    # Start a conversation in the space with the question as content
-    genie = w.genie
-    add_genie_log(f"✅ Genie API client initialized")
-    
-    # API signature: start_conversation(space_id: str, content: str) -> Wait[GenieMessage]
-    # Use positional arguments as shown in the signature
-    add_genie_log(f"📤 Sending question to Genie API...")
-    conversation_wait = genie.start_conversation(GENIE_ROOM_ID, question)
-    add_genie_log(f"✅ Conversation started, waiting for response...")
-    
-    # OPTIMIZED: Use Wait object's built-in waiting mechanism instead of manual polling
-    # This is much faster than manual polling
-    message = None
     try:
-        # Try to use Wait object's result() method
-        # Note: Wait.result() might not accept timeout parameter, so try without it first
-        if hasattr(conversation_wait, 'result'):
-            try:
-                # Try without timeout first
-                message = conversation_wait.result()
-            except TypeError:
-                # If it requires timeout, try with timedelta
-                try:
-                    from datetime import timedelta
-                    message = conversation_wait.result(timeout=timedelta(seconds=60))
-                except Exception as e:
-                    if DEBUG_MODE:
-                        print(f"DEBUG: Wait.result() failed: {e}")
-                    pass
-            except Exception as e:
-                if DEBUG_MODE:
-                    print(f"DEBUG: Wait.result() failed or timed out: {e}")
-                # Fall back to manual polling if Wait object doesn't work
-                pass
+        # Use Genie Conversation API
+        # Start a conversation in the space with the question as content
+        genie = w.genie
+        add_genie_log(f"✅ Genie API client initialized")
         
-        # If Wait object didn't work, try iterating (some Wait objects are iterable)
-        if not message and hasattr(conversation_wait, '__iter__'):
-            try:
-                # Get the last message from iterator
-                for msg in conversation_wait:
-                    message = msg
-            except Exception as e:
-                if DEBUG_MODE:
-                    print(f"DEBUG: Wait iteration failed: {e}")
+        # API signature: start_conversation(space_id: str, content: str) -> Wait[GenieMessage]
+        # Use positional arguments as shown in the signature
+        add_genie_log(f"📤 Sending question to Genie API...")
+        conversation_wait = genie.start_conversation(GENIE_ROOM_ID, question)
+        add_genie_log(f"✅ Conversation started, waiting for response...")
         
-        # If still no message, use it directly (might already be resolved)
-        if not message:
-            message = conversation_wait
-            
-    except Exception as e:
-        if DEBUG_MODE:
-            print(f"DEBUG: Error handling Wait object: {e}")
-        message = conversation_wait
-    
-    # Extract message ID to fetch detailed results FIRST
-    message_id = None
-    if hasattr(message, 'message_id'):
-        message_id = message.message_id
-    elif hasattr(message, 'id'):
-        message_id = message.id
-    elif isinstance(message, dict):
-        message_id = message.get('message_id') or message.get('id')
-    
-    # Also get conversation_id for listing messages
-    conversation_id = None
-    if hasattr(message, 'conversation_id'):
-        conversation_id = message.conversation_id
-    elif isinstance(message, dict):
-        conversation_id = message.get('conversation_id')
-    
-    # OPTIMIZED: Check message status only if Wait object didn't give us a completed message
-    # Most of the time, the Wait object will have already waited for completion
-    import time
-    if message_id and GENIE_ROOM_ID:
-        # Quick check: if message is already completed, skip polling
-        # Use try/except instead of hasattr because Databricks SDK raises KeyError
-        message_status = None
+        # OPTIMIZED: Use Wait object's built-in waiting mechanism instead of manual polling
+        # This is much faster than manual polling
+        message = None
         try:
-            message_status = message.status
-        except (AttributeError, KeyError):
-            try:
-                if isinstance(message, dict):
-                    message_status = message.get('status')
-            except:
-                pass
-        
-        status_str = str(message_status) if message_status else ''
-        is_completed = False
-        try:
-            is_completed = (message_status in ['COMPLETED', 'FAILED', 'CANCELLED'] or 
-                          status_str in ['MessageStatus.COMPLETED', 'MessageStatus.FAILED', 'MessageStatus.CANCELLED'] or
-                          'COMPLETED' in status_str or 'FAILED' in status_str or 'CANCELLED' in status_str)
-        except Exception as e:
-            # If status comparison fails, assume not completed and continue
-            if DEBUG_MODE:
-                print(f"DEBUG: Error checking status: {e}, message_status type: {type(message_status)}")
-            is_completed = False
-        
-        if not is_completed:
-            # Only poll if message isn't already completed (fallback case)
-            # Use longer polling time to ensure Genie completes processing
-            max_poll_time = 60  # Increased to 60 seconds to give Genie more time
-            poll_interval = 1  # Start with 1 second
-            max_poll_interval = 3  # Max 3 seconds between polls
-            start_time = time.time()
-            poll_count = 0
-            add_genie_log(f"⏳ Polling for message completion (max {max_poll_time}s)...")
-            
-            while time.time() - start_time < max_poll_time:
+            # Try to use Wait object's result() method
+            # Note: Wait.result() might not accept timeout parameter, so try without it first
+            if hasattr(conversation_wait, 'result'):
                 try:
-                    poll_count += 1
-                    message_details = genie.get_message(space_id=GENIE_ROOM_ID, conversation_id=conversation_id, message_id=message_id)
-                    
-                    # Use try/except instead of hasattr because Databricks SDK raises KeyError
-                    message_status = None
+                    # Try without timeout first
+                    message = conversation_wait.result()
+                except TypeError:
+                    # If it requires timeout, try with timedelta
                     try:
-                        message_status = message_details.status
-                    except (AttributeError, KeyError):
-                        try:
-                            if isinstance(message_details, dict):
-                                message_status = message_details.get('status')
-                        except:
-                            pass
-                    
-                    status_str = str(message_status) if message_status else ''
-                    is_completed = False
-                    try:
-                        is_completed = (message_status in ['COMPLETED', 'FAILED', 'CANCELLED'] or 
-                                      status_str in ['MessageStatus.COMPLETED', 'MessageStatus.FAILED', 'MessageStatus.CANCELLED'] or
-                                      'COMPLETED' in status_str or 'FAILED' in status_str or 'CANCELLED' in status_str)
+                        from datetime import timedelta
+                        message = conversation_wait.result(timeout=timedelta(seconds=60))
                     except Exception as e:
                         if DEBUG_MODE:
-                            print(f"DEBUG: Error checking status in poll: {e}, message_status type: {type(message_status)}")
-                        is_completed = False
-                    
-                    if is_completed:
-                        message = message_details
-                        if DEBUG_MODE:
-                            print(f"DEBUG: Message completed after {poll_count} polls")
-                        break
-                    
-                    time.sleep(min(poll_interval, max_poll_interval))
-                    poll_interval = min(poll_interval * 1.2, max_poll_interval)  # Gentler backoff
+                            print(f"DEBUG: Wait.result() failed: {e}")
+                        pass
                 except Exception as e:
                     if DEBUG_MODE:
-                        print(f"DEBUG: Error polling: {e}")
-                    time.sleep(1)
-    
-    # OPTIMIZED: Extract everything directly from the message returned by start_conversation
-    # The Wait object already returns the completed message with all attachments
-    # No need for list_conversation_messages or get_message calls
-    sql_query = None
-    genie_response = None
-    query_data = None
-    result_obj = None
-    
-    # Extract attachments directly from the message (this is where Genie's response is)
-    attachments = None
-    if hasattr(message, 'attachments'):
-        attachments = message.attachments
-    elif isinstance(message, dict):
-        attachments = message.get('attachments')
-    
-    # If we don't have attachments yet, try get_message as fallback (should rarely happen)
-    if not attachments and message_id and conversation_id and GENIE_ROOM_ID:
-        try:
-            message_details = genie.get_message(space_id=GENIE_ROOM_ID, conversation_id=conversation_id, message_id=message_id)
-            if hasattr(message_details, 'attachments'):
-                attachments = message_details.attachments
-            elif isinstance(message_details, dict):
-                attachments = message_details.get('attachments')
-            if DEBUG_MODE:
-                print(f"DEBUG: Got attachments from get_message fallback: {len(attachments) if attachments else 0}")
+                        print(f"DEBUG: Wait.result() failed or timed out: {e}")
+                    # Fall back to manual polling if Wait object doesn't work
+                    pass
+            
+            # If Wait object didn't work, try iterating (some Wait objects are iterable)
+            if not message and hasattr(conversation_wait, '__iter__'):
+                try:
+                    # Get the last message from iterator
+                    for msg in conversation_wait:
+                        message = msg
+                except Exception as e:
+                    if DEBUG_MODE:
+                        print(f"DEBUG: Wait iteration failed: {e}")
+            
+            # If still no message, use it directly (might already be resolved)
+            if not message:
+                message = conversation_wait
+                
         except Exception as e:
             if DEBUG_MODE:
-                print(f"DEBUG: Error getting message details: {e}")
+                print(f"DEBUG: Error handling Wait object: {e}")
+            message = conversation_wait
+        
+        # Extract message ID to fetch detailed results FIRST
+        message_id = None
+        if hasattr(message, 'message_id'):
+            message_id = message.message_id
+        elif hasattr(message, 'id'):
+            message_id = message.id
+        elif isinstance(message, dict):
+            message_id = message.get('message_id') or message.get('id')
+        
+        # Also get conversation_id for listing messages
+        conversation_id = None
+        if hasattr(message, 'conversation_id'):
+            conversation_id = message.conversation_id
+        elif isinstance(message, dict):
+            conversation_id = message.get('conversation_id')
     
-    # Extract response from attachments (per Genie API docs)
-    # According to docs: attachments array contains:
-    # - text: Generated text response (Genie's natural language answer) - OPTIONAL
-    # - query: Query statement if it exists - REQUIRED when SQL is generated
-    # - attachment_id: Identifier to get query results
-    # Reference: https://docs.databricks.com/aws/en/genie/conversation-api#-best-practices-for-using-the-genie-api
-    # IMPORTANT: Always check attachments first - message.content is usually just the question
-    # IMPORTANT: Genie often returns query.description as the natural language response, not text
-    if attachments:
-        for attachment in attachments:
-            candidate_text = None
+        # OPTIMIZED: Check message status only if Wait object didn't give us a completed message
+        # Most of the time, the Wait object will have already waited for completion
+        import time
+        if message_id and GENIE_ROOM_ID:
+            # Quick check: if message is already completed, skip polling
+            # Use try/except instead of hasattr because Databricks SDK raises KeyError
+            message_status = None
+            try:
+                message_status = message.status
+            except (AttributeError, KeyError):
+                try:
+                    if isinstance(message, dict):
+                        message_status = message.get('status')
+                except:
+                    pass
             
-            # PRIORITY 1: Check query.description FIRST (Genie often uses this instead of text)
-            if hasattr(attachment, 'query') and attachment.query is not None:
-                query_obj = attachment.query
-                if hasattr(query_obj, 'description') and query_obj.description:
-                    candidate_text = query_obj.description
-                elif isinstance(query_obj, dict):
-                    candidate_text = query_obj.get('description')
+            status_str = str(message_status) if message_status else ''
+            is_completed = False
+            try:
+                is_completed = (message_status in ['COMPLETED', 'FAILED', 'CANCELLED'] or 
+                              status_str in ['MessageStatus.COMPLETED', 'MessageStatus.FAILED', 'MessageStatus.CANCELLED'] or
+                              'COMPLETED' in status_str or 'FAILED' in status_str or 'CANCELLED' in status_str)
+            except Exception as e:
+                # If status comparison fails, assume not completed and continue
+                if DEBUG_MODE:
+                    print(f"DEBUG: Error checking status: {e}, message_status type: {type(message_status)}")
+                is_completed = False
             
-            # PRIORITY 2: Check text attachment (if description not found)
-            if not candidate_text:
-                if hasattr(attachment, 'text') and attachment.text is not None:
+            if not is_completed:
+                # Only poll if message isn't already completed (fallback case)
+                # Use shorter, faster polling
+                max_poll_time = 30  # Reduced to 30 seconds
+                poll_interval = 1  # Start with 1 second
+                max_poll_interval = 3  # Max 3 seconds between polls
+                start_time = time.time()
+                poll_count = 0
+                
+                while time.time() - start_time < max_poll_time:
+                    try:
+                        poll_count += 1
+                        message_details = genie.get_message(space_id=GENIE_ROOM_ID, conversation_id=conversation_id, message_id=message_id)
+                        
+                        # Use try/except instead of hasattr because Databricks SDK raises KeyError
+                        message_status = None
+                        try:
+                            message_status = message_details.status
+                        except (AttributeError, KeyError):
+                            try:
+                                if isinstance(message_details, dict):
+                                    message_status = message_details.get('status')
+                            except:
+                                pass
+                        
+                        status_str = str(message_status) if message_status else ''
+                        is_completed = False
+                        try:
+                            is_completed = (message_status in ['COMPLETED', 'FAILED', 'CANCELLED'] or 
+                                      status_str in ['MessageStatus.COMPLETED', 'MessageStatus.FAILED', 'MessageStatus.CANCELLED'] or
+                                      'COMPLETED' in status_str or 'FAILED' in status_str or 'CANCELLED' in status_str)
+                        except Exception as e:
+                            if DEBUG_MODE:
+                                print(f"DEBUG: Error checking status in poll: {e}, message_status type: {type(message_status)}")
+                            is_completed = False
+                        
+                        if is_completed:
+                            message = message_details
+                            if DEBUG_MODE:
+                                print(f"DEBUG: Message completed after {poll_count} polls")
+                            break
+                        
+                        time.sleep(min(poll_interval, max_poll_interval))
+                        poll_interval = min(poll_interval * 1.2, max_poll_interval)  # Gentler backoff
+                    except Exception as e:
+                        if DEBUG_MODE:
+                            print(f"DEBUG: Error polling: {e}")
+                        time.sleep(1)
+    
+        # OPTIMIZED: Extract everything directly from the message returned by start_conversation
+        # The Wait object already returns the completed message with all attachments
+        # No need for list_conversation_messages or get_message calls
+        sql_query = None
+        genie_response = None
+        query_data = None
+        result_obj = None
+    
+        # Extract attachments directly from the message (this is where Genie's response is)
+        attachments = None
+        if hasattr(message, 'attachments'):
+            attachments = message.attachments
+        elif isinstance(message, dict):
+            attachments = message.get('attachments')
+        
+        # If we don't have attachments yet, try get_message as fallback (should rarely happen)
+        if not attachments and message_id and conversation_id and GENIE_ROOM_ID:
+            try:
+                message_details = genie.get_message(space_id=GENIE_ROOM_ID, conversation_id=conversation_id, message_id=message_id)
+                if hasattr(message_details, 'attachments'):
+                    attachments = message_details.attachments
+                elif isinstance(message_details, dict):
+                    attachments = message_details.get('attachments')
+                if DEBUG_MODE:
+                    print(f"DEBUG: Got attachments from get_message fallback: {len(attachments) if attachments else 0}")
+            except Exception as e:
+                if DEBUG_MODE:
+                    print(f"DEBUG: Error getting message details: {e}")
+    
+        # Extract response from attachments (per Genie API docs)
+        # According to docs: attachments array contains:
+        # - text: Generated text response (Genie's natural language answer)
+        # - query: Query statement if it exists
+        # - attachment_id: Identifier to get query results
+        # Reference: https://docs.databricks.com/aws/en/genie/conversation-api#-best-practices-for-using-the-genie-api
+        statement_id = None  # Initialize before loop
+        if attachments:
+            for attachment in attachments:
+                # PRIORITY 1: Extract text response - this is Genie's natural language answer
+                # Per docs: "The attachments array contains Genie's response. It includes the generated text response (text)"
+                # IMPORTANT: For text-only responses, text is a TextAttachment object with .content attribute
+                candidate_text = None
+                if hasattr(attachment, 'text'):
                     text_obj = attachment.text
                     # Check if it's a TextAttachment object (has .content attribute)
                     if hasattr(text_obj, 'content'):
                         candidate_text = text_obj.content
                     elif isinstance(text_obj, str):
                         candidate_text = text_obj
+                    elif text_obj is None:
+                        candidate_text = None
                     else:
+                        # Try to convert to string
                         candidate_text = str(text_obj)
                 elif isinstance(attachment, dict):
                     text_obj = attachment.get('text')
@@ -1450,95 +1200,93 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
                         candidate_text = text_obj.get('content')
                     elif isinstance(text_obj, str):
                         candidate_text = text_obj
-            
-            # Use candidate_text if it's valid (not just the question)
-            if candidate_text and candidate_text != question and len(candidate_text) > len(question) + 10:
-                if not genie_response:
-                    genie_response = candidate_text
-            
-            # Extract SQL query from attachment
-            candidate_query = None
-            if hasattr(attachment, 'query') and attachment.query is not None:
-                query_obj = attachment.query
-                if hasattr(query_obj, 'query'):
-                    candidate_query = query_obj.query
-                elif isinstance(query_obj, dict):
-                    candidate_query = query_obj.get('query')
-                elif isinstance(query_obj, str):
-                    candidate_query = query_obj
-            elif isinstance(attachment, dict):
-                query_obj = attachment.get('query')
-                if isinstance(query_obj, dict):
-                    candidate_query = query_obj.get('query')
-                elif isinstance(query_obj, str):
-                    candidate_query = query_obj
-            
-            if candidate_query and not sql_query:
-                sql_query = candidate_query
-            
-            # Extract statement_id for query results
-            if hasattr(attachment, 'query') and attachment.query is not None:
-                query_obj = attachment.query
-                if hasattr(query_obj, 'statement_id'):
-                    statement_id = query_obj.statement_id
-                elif isinstance(query_obj, dict):
-                    statement_id = query_obj.get('statement_id')
-            elif isinstance(attachment, dict) and attachment.get('query'):
-                query_obj = attachment.get('query')
-                if isinstance(query_obj, dict):
-                    statement_id = query_obj.get('statement_id')
-                elif hasattr(query_obj, 'statement_id'):
-                    statement_id = query_obj.statement_id
+                    else:
+                        candidate_text = None
+                
+                if candidate_text and candidate_text != question and len(candidate_text) > len(question) + 10:
+                    if not genie_response:
+                        genie_response = candidate_text
+                
+                # Extract SQL query from attachment
+                if hasattr(attachment, 'query'):
+                    query_obj = attachment.query
+                    if hasattr(query_obj, 'query'):
+                        candidate_query = query_obj.query
+                    elif isinstance(query_obj, dict):
+                        candidate_query = query_obj.get('query')
+                    elif isinstance(query_obj, str):
+                        candidate_query = query_obj
+                    else:
+                        candidate_query = None
+                elif isinstance(attachment, dict):
+                    query_obj = attachment.get('query')
+                    if isinstance(query_obj, dict):
+                        candidate_query = query_obj.get('query')
+                    elif isinstance(query_obj, str):
+                        candidate_query = query_obj
+                    else:
+                        candidate_query = None
+                else:
+                    candidate_query = None
+                
+                if candidate_query and not sql_query:
+                    sql_query = candidate_query
+                
+                # Extract description from query attachment - use as fallback if no text response
+                if not genie_response and hasattr(attachment, 'query'):
+                    query_obj = attachment.query
+                    if hasattr(query_obj, 'description'):
+                        description = query_obj.description
+                        if description and description != question and len(description) > len(question) + 10:
+                            genie_response = description
+                    elif isinstance(query_obj, dict):
+                        description = query_obj.get('description')
+                        if description and description != question and len(description) > len(question) + 10:
+                            genie_response = description
+                
+                # Extract statement_id for query results
+                if hasattr(attachment, 'query') and hasattr(attachment.query, 'statement_id'):
+                    statement_id = attachment.query.statement_id
+                elif isinstance(attachment, dict) and attachment.get('query'):
+                    query_obj = attachment.get('query')
+                    if isinstance(query_obj, dict):
+                        statement_id = query_obj.get('statement_id')
+                    elif hasattr(query_obj, 'statement_id'):
+                        statement_id = query_obj.statement_id
     
-    # Get query results using statement_id (after collecting from all attachments)
-    statement_id = None  # Initialize if not set in loop
-    if 'statement_id' not in locals():
-        statement_id = None
-    
-    if statement_id and not query_data:
-        try:
-            if DEBUG_MODE:
-                print(f"DEBUG: Fetching query results using statement_id: {statement_id}")
-            from databricks.sdk.service.sql import StatementState
-            result = w.statement_execution.get_statement(statement_id)
-            result_obj = result
-            
-            if result and result.status.state == StatementState.SUCCEEDED and result.result:
-                if hasattr(result.result, 'data_array') and result.result.data_array:
-                    query_data = result.result.data_array
-                    
-                    # Get column names for chart creation
-                    columns = []
-                    if hasattr(result.result, 'manifest') and result.result.manifest:
-                        if hasattr(result.result.manifest, 'schema') and result.result.manifest.schema:
-                            if hasattr(result.result.manifest.schema, 'columns'):
-                                columns = [col.name for col in result.result.manifest.schema.columns]
-                    
-                    # Generate chart ONLY if visualization is explicitly requested
-                    if is_visualization_request and query_data:
-                        chart_data = create_plotly_chart(query_data, columns, question)
-                    
-                    # Format query data as answer if we don't have genie_response
-                    if query_data and not genie_response:
-                        formatted_rows = []
-                        if columns:
-                            formatted_rows.append(" | ".join(columns))
-                            formatted_rows.append(" | ".join(["---"] * len(columns)))
-                        for row in query_data:
-                            formatted_rows.append(" | ".join(str(val) for val in row))
-                        genie_response = "\n".join(formatted_rows)
-                    elif query_data and genie_response:
-                        # If we have both genie_response and query_data, format query_data as table
-                        # and append to response (genie_response will be shown first)
-                        formatted_rows = []
-                        if columns:
-                            formatted_rows.append(" | ".join(columns))
-                            formatted_rows.append(" | ".join(["---"] * len(columns)))
-                        for row in query_data:
-                            formatted_rows.append(" | ".join(str(val) for val in row))
-                        # Store formatted data for later inclusion in response_parts
-                        formatted_query_data = "\n".join(formatted_rows)
-                        # genie_response already set, formatted_query_data will be added to response_parts later
+        # Get query results using statement_id (after collecting from all attachments)
+        if statement_id and not query_data:
+            try:
+                if DEBUG_MODE:
+                    print(f"DEBUG: Fetching query results using statement_id: {statement_id}")
+                from databricks.sdk.service.sql import StatementState
+                result = w.statement_execution.get_statement(statement_id)
+                result_obj = result
+                
+                if result and result.status.state == StatementState.SUCCEEDED and result.result:
+                    if hasattr(result.result, 'data_array') and result.result.data_array:
+                        query_data = result.result.data_array
+                        
+                        # Get column names for chart creation
+                        columns = []
+                        if hasattr(result.result, 'manifest') and result.result.manifest:
+                            if hasattr(result.result.manifest, 'schema') and result.result.manifest.schema:
+                                if hasattr(result.result.manifest.schema, 'columns'):
+                                    columns = [col.name for col in result.result.manifest.schema.columns]
+                        
+                        # Generate chart ONLY if visualization is explicitly requested
+                        if is_visualization_request and query_data:
+                            chart_data = create_plotly_chart(query_data, columns, question)
+                        
+                        # Format query data as answer if we don't have genie_response
+                        if query_data and not genie_response:
+                            formatted_rows = []
+                            if columns:
+                                formatted_rows.append(" | ".join(columns))
+                                formatted_rows.append(" | ".join(["---"] * len(columns)))
+                            for row in query_data:
+                                formatted_rows.append(" | ".join(str(val) for val in row))
+                            genie_response = "\n".join(formatted_rows)
                     elif hasattr(result.result, 'rows') and result.result.rows:
                         query_data = result.result.rows
                         
@@ -1562,77 +1310,53 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
                             for row in query_data:
                                 formatted_rows.append(" | ".join(str(val) for val in row))
                             genie_response = "\n".join(formatted_rows)
-        except Exception as e:
-            if DEBUG_MODE:
-                print(f"DEBUG: Error getting query result: {e}")
-            pass
+            except Exception as e:
+                if DEBUG_MODE:
+                    print(f"DEBUG: Error getting query result: {e}")
+                pass
     
-    # Fallback: Extract from message object directly
-    # IMPORTANT: Don't use message.content as fallback - it's usually just the question
-    # Only use it if we have no attachments AND it's clearly different from the question
-    if not genie_response:
-        candidate_content = None
-        if hasattr(message, 'content'):
-            candidate_content = message.content
-        elif hasattr(message, 'answer'):
-            candidate_content = message.answer
-        elif hasattr(message, 'text'):
-            candidate_content = message.text
-        elif isinstance(message, dict):
-            candidate_content = message.get('content') or message.get('answer') or message.get('text')
+        # Fallback: Extract from message object directly
+        if not genie_response:
+            if hasattr(message, 'content'):
+                genie_response = message.content
+            elif hasattr(message, 'answer'):
+                genie_response = message.answer
+            elif hasattr(message, 'text'):
+                genie_response = message.text
+            elif isinstance(message, dict):
+                genie_response = message.get('content') or message.get('answer') or message.get('text')
         
-        # Only use if it's clearly different from the question (not just an echo)
-        if candidate_content and candidate_content != question and len(candidate_content) > len(question) + 10:
-            genie_response = candidate_content
-        
-    # Initialize response_parts BEFORE any conditional blocks
-    # Format the response with SQL and results
-    # Prioritize Genie's answer - it contains the actual formatted answer with numbers
-    response_parts = []
-    
-    # chart_data is already initialized at function start
-    chart_type = None
-    
-    # DEBUG: Include raw Genie response for debugging
-    debug_info = []
-    debug_info.append(f"DEBUG: Question: {question}")
-    debug_info.append(f"DEBUG: Message ID: {message_id}")
-    debug_info.append(f"DEBUG: Conversation ID: {conversation_id}")
-    debug_info.append(f"DEBUG: Genie Response (raw): {genie_response}")
-    debug_info.append(f"DEBUG: SQL Query: {sql_query}")
-    debug_info.append(f"DEBUG: Query Data: {str(query_data)[:500] if query_data else 'None'}")
-    
-    # Fallback: Try old method if attachments didn't work
-    if not genie_response or not sql_query:
-        # Try to get query result which contains SQL and data (legacy method)
-        try:
-            query_result = genie.get_message_query_result(space_id=GENIE_ROOM_ID, message_id=message_id)
-            if DEBUG_MODE:
-                print(f"DEBUG: get_message_query_result (legacy) returned: {type(query_result)}")
-            if query_result:
-                # Extract SQL query - try multiple attributes
-                if not sql_query:
-                    if hasattr(query_result, 'sql_query'):
-                        sql_query = query_result.sql_query
-                    elif hasattr(query_result, 'query'):
-                        sql_query = query_result.query
-                    elif isinstance(query_result, dict):
-                        sql_query = (query_result.get('sql_query') or 
-                                    query_result.get('query') or 
-                                    query_result.get('sql'))
-                
-                # Extract query data/results - try multiple structures
-                if not query_data:
-                    if hasattr(query_result, 'data'):
-                        query_data = query_result.data
-                    elif hasattr(query_result, 'result'):
-                        query_data = query_result.result
-                    elif hasattr(query_result, 'rows'):
-                        query_data = query_result.rows
-                    elif isinstance(query_result, dict):
-                        query_data = (query_result.get('data') or 
-                                     query_result.get('result') or 
-                                     query_result.get('rows'))
+        # Fallback: Try old method if attachments didn't work
+        if not genie_response or not sql_query:
+            # Try to get query result which contains SQL and data (legacy method)
+            try:
+                query_result = genie.get_message_query_result(space_id=GENIE_ROOM_ID, message_id=message_id)
+                if DEBUG_MODE:
+                    print(f"DEBUG: get_message_query_result (legacy) returned: {type(query_result)}")
+                if query_result:
+                    # Extract SQL query - try multiple attributes
+                    if not sql_query:
+                        if hasattr(query_result, 'sql_query'):
+                            sql_query = query_result.sql_query
+                        elif hasattr(query_result, 'query'):
+                            sql_query = query_result.query
+                        elif isinstance(query_result, dict):
+                            sql_query = (query_result.get('sql_query') or 
+                                        query_result.get('query') or 
+                                        query_result.get('sql'))
+                    
+                    # Extract query data/results - try multiple structures
+                    if not query_data:
+                        if hasattr(query_result, 'data'):
+                            query_data = query_result.data
+                        elif hasattr(query_result, 'result'):
+                            query_data = query_result.result
+                        elif hasattr(query_result, 'rows'):
+                            query_data = query_result.rows
+                        elif isinstance(query_result, dict):
+                            query_data = (query_result.get('data') or 
+                                         query_result.get('result') or 
+                                         query_result.get('rows'))
                         
                         # If query_data is a complex object, try to extract rows/values
                         if query_data and hasattr(query_data, 'rows'):
@@ -1641,11 +1365,11 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
                             query_data = query_data.data
                         elif query_data and isinstance(query_data, dict) and 'rows' in query_data:
                             query_data = query_data['rows']
-        except Exception as e:
-            if DEBUG_MODE:
-                print(f"DEBUG: Error getting query result (legacy): {e}")
-            pass
-        
+            except Exception as e:
+                if DEBUG_MODE:
+                    print(f"DEBUG: Error getting query result (legacy): {e}")
+                pass
+    
         # Only use this as a last resort if we still don't have an answer
         if not genie_response and message_id:
             try:
@@ -1692,210 +1416,228 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
             except Exception:
                 pass
     
-    # Check if we got a valid answer from Genie
-    import re
-    has_valid_answer = False
+        # Format the response with SQL and results
+        # Prioritize Genie's answer - it contains the actual formatted answer with numbers
+        response_parts = []
     
-    # Include Genie's answer FIRST - this is what the agent should use
-    # Check if this is a metadata query (schema, structure, table info) BEFORE processing response
-    is_metadata_query = bool(
+        # chart_data is already initialized at function start
+        chart_type = None
+    
+        # DEBUG: Include raw Genie response for debugging
+        debug_info = []
+        debug_info.append(f"DEBUG: Question: {question}")
+        debug_info.append(f"DEBUG: Message ID: {message_id}")
+        debug_info.append(f"DEBUG: Conversation ID: {conversation_id}")
+        debug_info.append(f"DEBUG: Genie Response (raw): {genie_response}")
+        debug_info.append(f"DEBUG: SQL Query: {sql_query}")
+        debug_info.append(f"DEBUG: Query Data: {str(query_data)[:500] if query_data else 'None'}")
+    
+        # Check if we got a valid answer from Genie
+        import re
+        has_valid_answer = False
+    
+        # Include Genie's answer FIRST - this is what the agent should use
+        # Check if this is a metadata query (schema, structure, table info) BEFORE processing response
+        is_metadata_query = bool(
         'schema' in question.lower() or
         'structure' in question.lower() or
         ('table' in question.lower() and ('column' in question.lower() or 'show' in question.lower() or 'describe' in question.lower())) or
         'what tables' in question.lower() or
         'show tables' in question.lower() or
         'describe' in question.lower()
-    )
-    
-    if genie_response and genie_response != question:
-        # Check if genie_response contains actual answer (not just question)
-        # For data queries: look for numbers/units OR if we have query_data (results will show numbers)
-        # For metadata/descriptive queries: look for meaningful text content
-        response_length_check = len(genie_response) > len(question) + 10  # Answer should be longer
-        
-        # Check for numeric/data indicators OR if we have query_data (which contains the actual numbers)
-        has_numeric_data = bool(re.search(r'\d+', genie_response) or 
-                               'MWh' in genie_response or 'MW' in genie_response or 
-                               '$' in genie_response or '%' in genie_response or
-                               query_data)  # If we have query_data, we have numeric results
-        
-        # Check for metadata/descriptive content (table names, column names, etc.)
-        # This helps identify when Genie returned metadata even if response is short
-        has_metadata_content = bool(
-            'table' in genie_response.lower() or 
-            'column' in genie_response.lower() or
-            'schema' in genie_response.lower() or
-            'structure' in genie_response.lower() or
-            'relationship' in genie_response.lower() or
-            'battery_telemetry' in genie_response or
-            'battery_dispatch' in genie_response or
-            'battery_assets' in genie_response or
-            'SELECT' in genie_response.upper() or
-            'FROM' in genie_response.upper() or
-            'DESCRIBE' in genie_response.upper() or
-            'SHOW' in genie_response.upper()
         )
-        
-        # Accept if:
-        # 1. It's longer than question AND (has numeric data OR has metadata content)
-        # 2. OR if we have query_data (actual results) - that's a valid answer even if description is short
-        # 3. OR if it's a metadata query and has SQL or query_data
-        if response_length_check and (has_numeric_data or has_metadata_content):
-            # This is Genie's actual answer - put it first and make it prominent
-            # Format the text to ensure proper spacing
-            formatted_response = format_response_text(genie_response)
-            response_parts.append(f"{formatted_response}")
-            has_valid_answer = True
-        elif query_data:
-            # If we have query_data, that's a valid answer even if genie_response is short
-            # Use genie_response as description, query_data will be formatted and added
-            if genie_response:
+    
+        if genie_response and genie_response != question:
+            # Check if genie_response contains actual answer (not just question)
+            # For data queries: look for numbers/units
+            # For metadata/descriptive queries: look for meaningful text content
+            response_length_check = len(genie_response) > len(question) + 10  # Answer should be longer
+            
+            # Check for numeric/data indicators
+            has_numeric_data = bool(re.search(r'\d+', genie_response) or 
+                                   'MWh' in genie_response or 'MW' in genie_response or 
+                                   '$' in genie_response or '%' in genie_response)
+            
+            # Check for metadata/descriptive content (table names, column names, etc.)
+            # This helps identify when Genie returned metadata even if response is short
+            has_metadata_content = bool(
+                'table' in genie_response.lower() or 
+                'column' in genie_response.lower() or
+                'schema' in genie_response.lower() or
+                'structure' in genie_response.lower() or
+                'relationship' in genie_response.lower() or
+                'battery_telemetry' in genie_response or
+                'battery_dispatch' in genie_response or
+                'battery_assets' in genie_response or
+                'SELECT' in genie_response.upper() or
+                'FROM' in genie_response.upper() or
+                'DESCRIBE' in genie_response.upper() or
+                'SHOW' in genie_response.upper()
+            )
+            
+            # Accept if it's longer than question AND (has numeric data OR has metadata content)
+            # OR if it's a metadata query and has SQL or query_data
+            if response_length_check and (has_numeric_data or has_metadata_content):
+                # This is Genie's actual answer - put it first and make it prominent
+                # Format the text to ensure proper spacing
                 formatted_response = format_response_text(genie_response)
                 response_parts.append(f"{formatted_response}")
-            has_valid_answer = True
-        elif is_metadata_query and (sql_query or query_data):
-            # For metadata queries, SQL or query_data counts as valid answer even if genie_response is short
-            has_valid_answer = True
-    
-    # Check query_data for valid results
-    if query_data:
-        try:
-            # Check if query_data has actual data
-            if isinstance(query_data, list) and len(query_data) > 0:
                 has_valid_answer = True
-            elif isinstance(query_data, dict) and ('rows' in query_data or 'data' in query_data):
-                rows_or_data = query_data.get('rows') or query_data.get('data')
-                if rows_or_data and len(rows_or_data) > 0:
-                    has_valid_answer = True
-        except Exception:
-            pass
-    
-    # If we don't have a valid answer, check if Genie returned the question (meaning it didn't process)
-    # For metadata queries, also check if we have SQL or query_data (those count as valid answers)
-    if not has_valid_answer:
-        # For metadata queries, check if we have SQL or query_data even if genie_response is missing/short
-        if is_metadata_query and (sql_query or query_data):
-            print(f"DEBUG: Metadata query - accepting SQL or query_data as valid response")
-            # Use SQL or query_data to construct response
-            if not genie_response and sql_query:
-                genie_response = f"The following SQL query shows the schema/structure:\n\n{sql_query}"
-                response_parts.append(genie_response)
-                has_valid_answer = True
-            elif not genie_response and query_data:
-                genie_response = "Schema information retrieved from database."
-                response_parts.append(genie_response)
-                has_valid_answer = True
-        
-        # If still no valid answer, check if Genie returned the question unchanged
-        if not has_valid_answer and not sql_query:
-            # Check if Genie just echoed the question back (common when it can't process)
-            if genie_response == question or (genie_response and len(genie_response) <= len(question) + 5):
-                if DEBUG_MODE:
-                    print(f"DEBUG: Genie returned question unchanged: genie_response='{genie_response}', question='{question}'")
-                if is_metadata_query:
-                    # Metadata query failed - provide helpful error
-                    error_msg = f"""Genie Error: Genie did not process the metadata question and returned it unchanged.
-
-Question: {question}
-Genie Response: {genie_response if genie_response else 'None'}
-Message ID: {message_id if message_id else 'None'}
-Conversation ID: {conversation_id if conversation_id else 'None'}
-
-For metadata questions (table structure, schema info), Genie may need:
-1. More specific instructions in the Genie space configuration
-2. SQL examples for DESCRIBE or SHOW commands
-3. Or you can ask specific data questions instead (e.g., "Show me columns in battery_telemetry")
-
-DEBUG INFO:
-{chr(10).join(debug_info)}
-
-Please check:
-1. Genie space exists and is accessible
-2. Question was properly sent to Genie
-3. Genie has completed processing (check Genie UI)
-4. GENIE_ROOM_ID is set correctly: {GENIE_ROOM_ID if GENIE_ROOM_ID else 'NOT SET'}
-
-The agent cannot proceed without Genie's answer."""
+            elif is_metadata_query and (sql_query or query_data):
+                # For metadata queries, SQL or query_data counts as valid answer even if genie_response is short
+                # But if genie_response is just the question, use SQL to construct a response
+                if genie_response == question or len(genie_response) <= len(question) + 5:
+                    # Genie echoed the question - use SQL as the answer
+                    if sql_query:
+                        genie_response = f"The following SQL query shows the schema/structure:\n\n{sql_query}"
+                        response_parts.append(genie_response)
+                    elif query_data:
+                        genie_response = "Schema information retrieved from database."
+                        response_parts.append(genie_response)
                 else:
-                    # Regular query failed
-                    error_msg = f"""Genie Error: Genie did not process the question and returned it unchanged.
+                    # Genie provided some response, use it
+                    formatted_response = format_response_text(genie_response)
+                    response_parts.append(f"{formatted_response}")
+                has_valid_answer = True
+    
+        # Check query_data for valid results
+        if query_data:
+            try:
+                # Check if query_data has actual data
+                if isinstance(query_data, list) and len(query_data) > 0:
+                    has_valid_answer = True
+                elif isinstance(query_data, dict) and ('rows' in query_data or 'data' in query_data):
+                    rows_or_data = query_data.get('rows') or query_data.get('data')
+                    if rows_or_data and len(rows_or_data) > 0:
+                        has_valid_answer = True
+            except Exception:
+                pass
+    
+        # If we don't have a valid answer, check if Genie returned the question (meaning it didn't process)
+        # For metadata queries, also check if we have SQL or query_data (those count as valid answers)
+        if not has_valid_answer:
+            # For metadata queries, check if we have SQL or query_data even if genie_response is missing/short
+            if is_metadata_query and (sql_query or query_data):
+                if DEBUG_MODE:
+                    print(f"DEBUG: Metadata query - accepting SQL or query_data as valid response")
+                # Use SQL or query_data to construct response
+                if not genie_response and sql_query:
+                    genie_response = f"The following SQL query shows the schema/structure:\n\n{sql_query}"
+                    response_parts.append(genie_response)
+                    has_valid_answer = True
+                elif not genie_response and query_data:
+                    genie_response = "Schema information retrieved from database."
+                    response_parts.append(genie_response)
+                    has_valid_answer = True
+            
+            # If still no valid answer, check if Genie returned the question unchanged
+            # BUT: For metadata queries with SQL, we already handled this above
+            if not has_valid_answer and not sql_query:
+                # Check if Genie just echoed the question back (common when it can't process)
+                if genie_response == question or (genie_response and len(genie_response) <= len(question) + 5):
+                    if is_metadata_query:
+                        # Metadata query failed - provide helpful error
+                        error_msg = f"""Genie Error: Genie did not process the metadata question and returned it unchanged.
 
-Question: {question}
-Genie Response: {genie_response if genie_response else 'None'}
-Message ID: {message_id if message_id else 'None'}
-Conversation ID: {conversation_id if conversation_id else 'None'}
+    Question: {question}
+    Genie Response: {genie_response if genie_response else 'None'}
+    Message ID: {message_id if message_id else 'None'}
+    Conversation ID: {conversation_id if conversation_id else 'None'}
 
-Possible reasons:
-1. Question may be too complex or outside Genie's scope
-2. Genie may need more specific instructions in the space configuration
-3. The question may require metadata queries that Genie doesn't support directly
+    For metadata questions (table structure, schema info), Genie may need:
+    1. More specific instructions in the Genie space configuration
+    2. SQL examples for DESCRIBE or SHOW commands
+    3. Or you can ask specific data questions instead (e.g., "Show me columns in battery_telemetry")
 
-For metadata questions (table structure, schema info), consider:
-- Asking specific data questions instead (e.g., "Show me columns in battery_telemetry" vs "What tables are available")
-- Using the search_battery_docs tool for documentation about database structure
-- Checking the Genie UI directly to see if Genie processed the question
+    DEBUG INFO:
+    {chr(10).join(debug_info)}
 
-DEBUG INFO:
-{chr(10).join(debug_info)}
+    Please check:
+    1. Genie space exists and is accessible
+    2. Question was properly sent to Genie
+    3. Genie has completed processing (check Genie UI)
+    4. GENIE_ROOM_ID is set correctly: {GENIE_ROOM_ID if GENIE_ROOM_ID else 'NOT SET'}
 
-Please check:
-1. Genie space exists and is accessible
-2. Question was properly sent to Genie
-3. Genie has completed processing (check Genie UI)
-4. GENIE_ROOM_ID is set correctly: {GENIE_ROOM_ID if GENIE_ROOM_ID else 'NOT SET'}
+    The agent cannot proceed without Genie's answer."""
+                    else:
+                        # Regular query failed
+                        error_msg = f"""Genie Error: Genie did not process the question and returned it unchanged.
 
-The agent cannot proceed without Genie's answer."""
-                raise Exception(error_msg)
-            else:
-                error_msg = f"""Genie Error: Could not extract answer from Genie response.
+    Question: {question}
+    Genie Response: {genie_response if genie_response else 'None'}
+    Message ID: {message_id if message_id else 'None'}
+    Conversation ID: {conversation_id if conversation_id else 'None'}
 
-Question: {question}
-Genie Response: {genie_response if genie_response else 'None'}
-Message ID: {message_id if message_id else 'None'}
-Conversation ID: {conversation_id if conversation_id else 'None'}
+    Possible reasons:
+    1. Question may be too complex or outside Genie's scope
+    2. Genie may need more specific instructions in the space configuration
+    3. The question may require metadata queries that Genie doesn't support directly
 
-DEBUG INFO:
-{chr(10).join(debug_info)}
+    For metadata questions (table structure, schema info), consider:
+    - Asking specific data questions instead (e.g., "Show me columns in battery_telemetry" vs "What tables are available")
+    - Using the search_battery_docs tool for documentation about database structure
+    - Checking the Genie UI directly to see if Genie processed the question
 
-Please check:
-1. Genie space exists and is accessible
-2. Question was properly sent to Genie
-3. Genie has completed processing (check Genie UI)
-4. GENIE_ROOM_ID is set correctly: {GENIE_ROOM_ID if GENIE_ROOM_ID else 'NOT SET'}
+    DEBUG INFO:
+    {chr(10).join(debug_info)}
 
-The agent cannot proceed without Genie's answer."""
-                raise Exception(error_msg)
-        
+    Please check:
+    1. Genie space exists and is accessible
+    2. Question was properly sent to Genie
+    3. Genie has completed processing (check Genie UI)
+    4. GENIE_ROOM_ID is set correctly: {GENIE_ROOM_ID if GENIE_ROOM_ID else 'NOT SET'}
+
+    The agent cannot proceed without Genie's answer."""
+                    raise Exception(error_msg)
+                else:
+                    error_msg = f"""Genie Error: Could not extract answer from Genie response.
+
+    Question: {question}
+    Genie Response: {genie_response if genie_response else 'None'}
+    Message ID: {message_id if message_id else 'None'}
+    Conversation ID: {conversation_id if conversation_id else 'None'}
+
+    DEBUG INFO:
+    {chr(10).join(debug_info)}
+
+    Please check:
+    1. Genie space exists and is accessible
+    2. Question was properly sent to Genie
+    3. Genie has completed processing (check Genie UI)
+    4. GENIE_ROOM_ID is set correctly: {GENIE_ROOM_ID if GENIE_ROOM_ID else 'NOT SET'}
+
+    The agent cannot proceed without Genie's answer."""
+                    raise Exception(error_msg)
+    
         # If we have SQL but no answer, that's also a problem
-        if sql_query and not has_valid_answer:
+        # BUT: For metadata queries, SQL itself is a valid answer (already handled above)
+        if sql_query and not has_valid_answer and not is_metadata_query:
             error_msg = f"""Genie Error: SQL was generated but no answer was extracted.
 
-Question: {question}
-SQL Generated: {sql_query[:200]}...
-Genie Response: {genie_response if genie_response else 'None'}
+    Question: {question}
+    SQL Generated: {sql_query[:200]}...
+    Genie Response: {genie_response if genie_response else 'None'}
 
-DEBUG INFO:
-{chr(10).join(debug_info)}
+    DEBUG INFO:
+    {chr(10).join(debug_info)}
 
-Please check the Genie UI for the actual answer. The agent cannot proceed without Genie's answer."""
+    Please check the Genie UI for the actual answer. The agent cannot proceed without Genie's answer."""
             raise Exception(error_msg)
         
         # If we still don't have a valid answer after all checks, fail
         if not response_parts and not has_valid_answer:
-            if DEBUG_MODE:
-                print(f"DEBUG: No valid answer found. genie_response='{genie_response}', sql_query={bool(sql_query)}, query_data={bool(query_data)}, has_valid_answer={has_valid_answer}, response_parts={len(response_parts)}")
             error_msg = f"""Genie Error: No valid answer extracted from Genie.
 
-Question: {question}
-Genie Response: {genie_response if genie_response else 'None'}
-Query Data: {str(query_data)[:200] if query_data else 'None'}
+    Question: {question}
+    Genie Response: {genie_response if genie_response else 'None'}
+    Query Data: {str(query_data)[:200] if query_data else 'None'}
 
-DEBUG INFO:
-{chr(10).join(debug_info)}
+    DEBUG INFO:
+    {chr(10).join(debug_info)}
 
-The agent cannot proceed without Genie's answer."""
+    The agent cannot proceed without Genie's answer."""
             raise Exception(error_msg)
-        
+    
         # Add debug info to response (will be shown in expander)
         if debug_info:
             response_parts.append(f"\n\n---\n**DEBUG INFO (Raw Genie Response):**\n```\n{chr(10).join(debug_info)}\n```")
@@ -1903,7 +1645,7 @@ The agent cannot proceed without Genie's answer."""
         # Then add SQL query if available
         if sql_query:
             response_parts.append(f"\n\n🤖 **SQL Generated by Genie:**\n```sql\n{sql_query}\n```")
-        
+    
         # Add query results if available
         # IMPORTANT: Close code blocks properly before adding chart markers
         if query_data:
@@ -1955,42 +1697,48 @@ The agent cannot proceed without Genie's answer."""
         # Use stored result_obj if available for column names
         if is_visualization_request and query_data and not chart_data:
             try:
-                print(f"DEBUG: Chart creation requested - is_visualization_request={is_visualization_request}, query_data={query_data is not None}, chart_data={chart_data}")
+                if DEBUG_MODE:
+                    print(f"DEBUG: Chart creation requested - is_visualization_request={is_visualization_request}, query_data={query_data is not None}, chart_data={chart_data}")
                 # Try to get column names from stored result_obj
                 columns = None
                 if result_obj and hasattr(result_obj, 'result') and hasattr(result_obj.result, 'manifest'):
                     if hasattr(result_obj.result.manifest, 'schema') and hasattr(result_obj.result.manifest.schema, 'columns'):
                         columns = [col.name for col in result_obj.result.manifest.schema.columns]
-                        print(f"DEBUG: Extracted columns from result_obj: {columns}")
+                        if DEBUG_MODE:
+                            print(f"DEBUG: Extracted columns from result_obj: {columns}")
                 
-                print(f"DEBUG: Attempting chart creation with columns: {columns}, query_data length: {len(query_data) if isinstance(query_data, list) else 'N/A'}")
+                if DEBUG_MODE:
+                    print(f"DEBUG: Attempting chart creation with columns: {columns}, query_data length: {len(query_data) if isinstance(query_data, list) else 'N/A'}")
                 chart_data = create_plotly_chart(query_data, columns, question)
-                if chart_data:
+                if chart_data and DEBUG_MODE:
                     print(f"DEBUG: ✓ Chart creation succeeded: {chart_data['type']}")
-                else:
+                elif DEBUG_MODE:
                     print(f"DEBUG: ✗ Chart creation returned None - chart creation failed")
             except Exception as e:
-                print(f"DEBUG: Error generating chart: {e}")
-                import traceback
-                traceback.print_exc()
+                if DEBUG_MODE:
+                    print(f"DEBUG: Error generating chart: {e}")
+                    import traceback
+                    traceback.print_exc()
         
         # Embed chart JSON in response if available
         # IMPORTANT: Add chart AFTER all query results to avoid it being included in "Raw Query Results"
         if chart_data:
-            print(f"DEBUG: ✓ Embedding chart JSON in response (type: {chart_data['type']}, title: {chart_data.get('title', 'N/A')})")
+            import json
+            if DEBUG_MODE:
+                print(f"DEBUG: ✓ Embedding chart JSON in response (type: {chart_data['type']}, title: {chart_data.get('title', 'N/A')})")
             # chart_data['json'] is already a JSON string, so we need to serialize the whole dict properly
             # json.dumps will automatically escape the inner JSON string
-            import json
             chart_marker = f"\n\n[PLOTLY_CHART_START]\n{json.dumps(chart_data)}\n[PLOTLY_CHART_END]\n"
             response_parts.append(chart_marker)
-            print(f"DEBUG: Chart marker length: {len(chart_marker)}, contains START: {'PLOTLY_CHART_START' in chart_marker}")
-        else:
+            if DEBUG_MODE:
+                print(f"DEBUG: Chart marker length: {len(chart_marker)}, contains START: {'PLOTLY_CHART_START' in chart_marker}")
+        elif DEBUG_MODE:
             print(f"DEBUG: ✗ No chart_data to embed. is_visualization_request={is_visualization_request}, query_data={query_data is not None}")
             # Charts are only created when explicitly requested - no automatic creation
-        
+    
         response = "\n".join(response_parts)
         response += "\n\n---\n*Note: This answer and SQL were dynamically generated by Databricks Genie.*"
-        
+    
         # Final formatting pass to ensure proper spacing around numbers and currency
         # BUT preserve chart markers - they must not be modified
         # Split response by chart markers, format each part separately, then rejoin
@@ -2012,21 +1760,15 @@ The agent cannot proceed without Genie's answer."""
         if DEBUG_MODE:
             print(f"DEBUG: Final response length: {len(response)}, contains chart markers: {'PLOTLY_CHART_START' in response}")
         
-        # CRITICAL: Ensure we always return a string, never None
-        if not response:
-            response = "Error: Empty response generated. Please check Genie API logs."
-            if DEBUG_MODE:
-                print(f"DEBUG: WARNING - response was empty, using fallback")
+        add_genie_log(f"✅ Direct API query completed successfully")
         
         return response
-
-# Configuration for Genie
-# Try to get from environment variable, or use default if set
-GENIE_ROOM_ID = os.environ.get("GENIE_ROOM_ID", None)
-if not GENIE_ROOM_ID:
-    # Try to read from a config file or use a default
-    # Default Genie room ID (can be overridden with environment variable)
-    GENIE_ROOM_ID = "01f0bca10415147a91fe3c98f80e596e"  # Battery Trading Agent space
+    
+    except Exception as e:
+        # Don't return error message - raise exception so agent doesn't fall back to other tools
+        error_msg = f"Genie API Error: {str(e)}\n\nPlease ensure:\n1. Genie space 'battery-trading-agent' exists\n2. GENIE_ROOM_ID is set correctly\n3. You have permissions to use the space\n4. Genie API is enabled in your workspace\n\nQuestion asked: {question}"
+        # Raise exception instead of returning error message
+        raise Exception(error_msg)
 
 # Combine all tools - ONLY Genie for SQL queries, no predefined SQL tools
 tools = [search_battery_docs, query_genie]

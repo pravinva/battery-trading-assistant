@@ -235,6 +235,9 @@ The app provides an interactive chat interface built with Streamlit:
 User Question
     ↓
 Streamlit App (app/app.py)
+    ├── MCP Toggle Check
+    ├── Set USE_GENIE_MCP environment variable
+    └── Load Agent Module
     ↓
 Agent Invocation (LangGraph)
     ↓
@@ -242,17 +245,33 @@ Tool Selection (search_battery_docs OR query_genie)
     ↓
 Tool Execution
     ├── Vector Search → Documentation chunks
-    └── Genie API → SQL generation → Query execution → Results
+    └── query_genie Tool → Routing Logic
+        ├── Check USE_GENIE_MCP flag
+        ├── Check _mcp_client availability
+        └── Route to:
+            ├── MCP Server Path:
+            │   ├── Discover MCP tools
+            │   ├── Call Genie tool via MCP
+            │   ├── Extract JSON response
+            │   └── Parse content, query, data
+            └── Direct API Path:
+                ├── Start conversation
+                ├── Wait for completion
+                ├── Extract attachments
+                ├── Fetch query results
+                └── Format response
     ↓
 Response Assembly
     ├── Text answer
     ├── Chart (if requested)
-    └── Sources
+    ├── Sources
+    └── Execution logs (MCP vs Direct API)
     ↓
 Streamlit Rendering
     ├── Display text
     ├── Render Plotly chart
-    └── Show sources
+    ├── Show sources
+    └── Show execution logs (expander)
 ```
 
 ## How the Agent Works
@@ -280,13 +299,43 @@ The agent is built using **LangGraph** (Databricks Mosaic AI Agent Framework) wi
 │  ┌──────────────────────────────────────────────────┐   │
 │  │            Tool Execution                        │   │
 │  │  ┌──────────────┐      ┌──────────────────┐    │   │
-│  │  │ Vector Search│      │  Genie API       │    │   │
+│  │  │ Vector Search│      │  query_genie Tool │    │   │
 │  │  │              │      │                  │    │   │
-│  │  │ • Embed query│      │ • Generate SQL    │    │   │
-│  │  │ • Search docs│      │ • Execute query   │    │   │
-│  │  │ • Return top │      │ • Return results │    │   │
-│  │  │   chunks     │      │ • Create chart   │    │   │
-│  │  └──────────────┘      └──────────────────┘    │   │
+│  │  │ • Embed query│      │  ┌──────────────┐│    │   │
+│  │  │ • Search docs│      │  │Routing Logic ││    │   │
+│  │  │ • Return top │      │  └──────┬───────┘│    │   │
+│  │  │   chunks     │      │         │        │    │   │
+│  │  └──────────────┘      │    ┌────┴────┐   │    │   │
+│  │                        │    │  MCP?   │   │    │   │
+│  │                        │    └────┬────┘   │    │   │
+│  │                        │         │        │    │   │
+│  │                        │    ┌───┴───┐   │    │   │
+│  │                        │    │ YES   │NO │    │   │
+│  │                        │    └───┬───┴───┘   │    │   │
+│  │                        │        │          │    │   │
+│  │                        │  ┌─────┴─────┐   │    │   │
+│  │                        │  │           │   │    │   │
+│  │                        │  ▼           ▼   │    │   │
+│  │                        │┌──────┐  ┌──────────┐│    │   │
+│  │                        ││ MCP  │  │  Direct  ││    │   │
+│  │                        ││Server│  │   API    ││    │   │
+│  │                        │└──────┘  └──────────┘│    │   │
+│  │                        │  │           │       │    │   │
+│  │                        │  │           │       │    │   │
+│  │                        │  ▼           ▼       │    │   │
+│  │                        │• Discover   • Start  │    │   │
+│  │                        │  tools      conv    │    │   │
+│  │                        │• Call tool  • Poll  │    │   │
+│  │                        │• Parse JSON • Extract│    │   │
+│  │                        │            • Fetch   │    │   │
+│  │                        └──────────┬───────────┘    │   │
+│  │                                   │                │   │
+│  │                                   ▼                │   │
+│  │                        • Generate SQL              │   │
+│  │                        • Execute query             │   │
+│  │                        • Return results            │   │
+│  │                        • Create chart              │   │
+│  │                        • Log execution method      │   │
 │  └──────────────────────────────────────────────────┘   │
 │                         ↓                                │
 │  ┌──────────────────────────────────────────────────┐   │
@@ -295,9 +344,52 @@ The agent is built using **LangGraph** (Databricks Mosaic AI Agent Framework) wi
 │  │  • Format answer                                │   │
 │  │  • Add sources                                  │   │
 │  │  • Embed charts (if requested)                   │   │
+│  │  • Include execution logs                        │   │
 │  └──────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────┘
 ```
+
+### Code Flow: query_genie Tool
+
+The `query_genie` tool implements intelligent routing between MCP and Direct API:
+
+```python
+@tool
+def query_genie(question: str) -> str:
+    """Query Databricks Genie for SQL generation"""
+    
+    # Detect visualization request
+    is_visualization_request = detect_visualization_keywords(question)
+    
+    # Route based on configuration
+    if USE_GENIE_MCP and _mcp_client:
+        # Route to MCP Server
+        add_genie_log("🔌 Routing to Genie MCP server")
+        return query_genie_via_mcp(question, is_visualization_request)
+    else:
+        # Route to Direct API
+        add_genie_log("🔌 Routing to Direct Genie API")
+        return query_genie_via_direct_api(question, is_visualization_request)
+```
+
+**Key Functions:**
+
+1. **`query_genie_via_mcp()`**: 
+   - Discovers MCP tools via `list_tools()`
+   - Calls Genie tool via `call_tool()`
+   - Parses JSON response from MCP result
+   - Extracts `content`, `query`, and `data` fields
+
+2. **`query_genie_via_direct_api()`**:
+   - Starts conversation via `start_conversation()`
+   - Waits for completion (Wait object or polling)
+   - Extracts attachments from message
+   - Fetches query results via Statement Execution API
+   - Formats response with SQL and results
+
+3. **`get_genie_logs()`**: Returns execution logs showing which method was used
+
+4. **`add_genie_log()`**: Safely adds log entries (won't break flow if logging fails)
 
 ### Tool Selection Logic
 
@@ -324,11 +416,31 @@ The agent uses intelligent tool selection based on question type:
 - Examples: "What's the current SoC for RESS2?", "Show revenue for last 24 hours"
 
 **How It Works:**
-1. Sends natural language question to Genie Conversational API
-2. Genie generates SQL query automatically
-3. Executes query against Delta Lake tables
-4. Returns formatted results
-5. Creates charts if explicitly requested (see Chart Creation below)
+
+**MCP Path:**
+1. Discovers available tools from MCP server (`list_tools()`)
+2. Finds Genie query tool (name contains "query")
+3. Calls tool via MCP (`call_tool(tool_name, {"query": question})`)
+4. Extracts JSON response from MCP result
+5. Parses `content`, `query`, and `data` fields
+6. Formats response with SQL and results
+7. Creates charts if explicitly requested
+
+**Direct API Path:**
+1. Sends natural language question to Genie Conversational API (`start_conversation()`)
+2. Waits for completion (Wait object or polling)
+3. Extracts attachments from completed message
+4. Extracts SQL query and `statement_id` from attachments
+5. Fetches query results via Statement Execution API
+6. Returns formatted results
+7. Creates charts if explicitly requested (see Chart Creation below)
+
+**Automatic Routing:**
+- Checks `USE_GENIE_MCP` environment variable
+- Checks if `_mcp_client` is initialized
+- Routes to MCP if both conditions are true
+- Falls back to Direct API otherwise
+- Logs which method is used for debugging
 
 ### Conversation Flow
 
@@ -437,17 +549,116 @@ The agent uses a comprehensive system prompt that:
 - Instructs chart creation behavior
 - Guides response formatting
 
-## Genie Conversational API Integration
+## Genie Integration: MCP vs Direct API
 
-The agent uses the **Databricks Genie Conversational API** to dynamically generate and execute SQL queries. This section explains how the API response decoding works.
+The agent supports **two methods** for interacting with Databricks Genie:
+
+1. **Genie MCP Server** (Model Context Protocol) - Recommended for production
+2. **Direct Genie API** (Conversational API) - Fallback option
 
 ### Architecture Overview
 
 ```
-User Question → Agent → query_genie Tool → Genie API → SQL Generation → Query Execution → Results
+User Question → Agent → query_genie Tool → [Routing Logic] → [MCP Server OR Direct API] → SQL Generation → Query Execution → Results
 ```
 
-### API Flow
+### Routing Logic
+
+The agent automatically routes queries based on configuration:
+
+```python
+if USE_GENIE_MCP and _mcp_client:
+    # Route to MCP Server
+    return query_genie_via_mcp(question, is_visualization_request)
+else:
+    # Route to Direct API
+    return query_genie_via_direct_api(question, is_visualization_request)
+```
+
+**Configuration:**
+- **Enable MCP**: Set `USE_GENIE_MCP=true` environment variable or toggle in Streamlit UI
+- **MCP Server URL**: Automatically constructed as `https://<workspace-hostname>/api/2.0/mcp/genie/{genie_space_id}`
+- **Fallback**: If MCP is unavailable or fails, automatically falls back to Direct API
+
+### Method 1: Genie MCP Server (Recommended)
+
+**What is MCP?**
+- **Model Context Protocol (MCP)** is a standardized protocol for connecting AI agents to external tools
+- Databricks provides a **managed MCP server** for Genie Spaces, Vector Search indexes, and Unity Catalog functions
+- MCP offers a unified, standardized API for tool interaction
+
+**Benefits:**
+- ✅ Standardized protocol (not Databricks-specific)
+- ✅ Tool discovery via `list_tools()`
+- ✅ Better error handling and connection management
+- ✅ Future-proof architecture
+
+**How It Works:**
+
+```
+1. Initialize MCP Client
+   ↓
+2. Discover Tools (list_tools())
+   ↓
+3. Find Genie Query Tool
+   ↓
+4. Call Tool via MCP (call_tool())
+   ↓
+5. Extract Response from MCP Result
+   ↓
+6. Parse JSON Response (content, query, data)
+   ↓
+7. Format and Return
+```
+
+**Implementation:**
+
+```python
+# Initialize MCP client
+_mcp_client = DatabricksMCPClient(
+    server_url=f"{workspace_hostname}/api/2.0/mcp/genie/{GENIE_ROOM_ID}",
+    workspace_client=w
+)
+
+# Discover tools
+tools = _mcp_client.list_tools()
+genie_tool = [t for t in tools if "query" in t.name.lower()][0]
+
+# Call tool
+result = _mcp_client.call_tool(genie_tool.name, {"query": question})
+
+# Extract response
+content = result.content[0].text
+parsed = json.loads(content)
+genie_response = parsed.get("content")
+sql_query = parsed.get("query")
+query_data = parsed.get("data")
+```
+
+**Error Handling:**
+- Network errors (broken pipe, connection errors) are caught and reported clearly
+- Falls back to Direct API if MCP initialization fails
+- Logs all execution steps for debugging
+
+### Method 2: Direct Genie API (Fallback)
+
+The agent uses the **Databricks Genie Conversational API** to dynamically generate and execute SQL queries. This is the original implementation and serves as a fallback when MCP is unavailable.
+
+**How It Works:**
+
+```
+1. Start Conversation (start_conversation)
+   ↓
+2. Wait for Completion (Wait object or polling)
+   ↓
+3. Extract Attachments from Message
+   ↓
+4. Extract SQL Query and statement_id
+   ↓
+5. Fetch Query Results (Statement Execution API)
+   ↓
+6. Format Response
+```
 
 #### Step 1: Start Conversation
 
@@ -459,13 +670,19 @@ conversation_wait = genie.start_conversation(GENIE_ROOM_ID, question)
 - Returns a `Wait[GenieMessage]` object
 - Extracts `message_id` and `conversation_id` from response
 
-#### Step 2: Poll for Status
+#### Step 2: Wait for Completion
 
+**Optimized Approach:**
+- Uses `Wait` object's built-in waiting mechanism (faster than manual polling)
+- Falls back to manual polling only if Wait object doesn't work
+- Maximum wait time: 60 seconds
+
+**Manual Polling (Fallback):**
 Following [Genie API best practices](https://docs.databricks.com/aws/en/genie/conversation-api#-best-practices-for-using-the-genie-api):
 
 ```python
-# Poll every 2-10 seconds with exponential backoff
-# Max polling time: 2 minutes (for UI responsiveness)
+# Poll every 1-3 seconds with exponential backoff
+# Max polling time: 30 seconds (optimized for speed)
 while status not in ['COMPLETED', 'FAILED', 'CANCELLED']:
     message_details = genie.get_message(
         space_id=GENIE_ROOM_ID, 
@@ -477,10 +694,10 @@ while status not in ['COMPLETED', 'FAILED', 'CANCELLED']:
 ```
 
 **Key Points:**
-- Polls every 2 seconds initially, up to 10 seconds max interval
-- Exponential backoff: `poll_interval = min(poll_interval * 1.5, 10)`
+- Polls every 1 second initially, up to 3 seconds max interval
+- Exponential backoff: `poll_interval = min(poll_interval * 1.2, 3)`
 - Breaks immediately when status is `COMPLETED`
-- Maximum polling time: 2 minutes (reduced from 10 minutes for UI responsiveness)
+- Maximum polling time: 30 seconds (optimized for UI responsiveness)
 
 #### Step 3: Extract Response from Attachments
 
