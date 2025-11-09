@@ -174,6 +174,10 @@ class SupervisorAgent(BaseAgent):
             # Build synthesis prompt
             source_label = "Data Analysis (from SQL queries via Databricks Genie)" if agent_type == "data" else "Documentation (from technical documentation)"
             
+            # Check if user requested visualization
+            viz_keywords = ['plot', 'chart', 'graph', 'visualize', 'visualization', 'show me a', 'display a', 'create a']
+            is_viz_request = any(keyword in question.lower() for keyword in viz_keywords)
+            
             synthesis_prompt = f"""You are a helpful assistant that formats technical data into clear, readable answers.
 
 User Question: {question}
@@ -188,12 +192,14 @@ Please convert this technical response into a clear, natural answer that:
 4. Maintains a professional, expert tone appropriate for Energy Australia operations
 5. Removes technical details like SQL queries, JSON structures, and debug information
 6. Presents data in a readable format (e.g., "RESS2 has a SoC of 82.7%" instead of raw arrays)
+{"7. IMPORTANT: The user requested a visualization/chart. A chart has been generated and will be displayed below your response. Do NOT say you cannot create charts or visualizations - the chart is already created and will appear." if is_viz_request and chart_markers else ""}
 
 Do not include:
 - Raw JSON structures
 - SQL queries (unless the user specifically asked to see the SQL)
 - Technical implementation details
 - Debug information
+{"- Statements saying you cannot create charts or visualizations (the chart is already generated)" if is_viz_request and chart_markers else ""}
 
 Provide a clean, readable answer:"""
             
@@ -255,6 +261,10 @@ Provide a clean, readable answer:"""
                     # Remove chart markers from cleaned_data so they don't appear in prompt
                     cleaned_data = re_module.sub(r'\[PLOTLY_CHART_START\].*?\[PLOTLY_CHART_END\]', '', cleaned_data, flags=re_module.DOTALL)
             
+            # Check if user requested visualization
+            viz_keywords = ['plot', 'chart', 'graph', 'visualize', 'visualization', 'show me a', 'display a', 'create a']
+            is_viz_request = any(keyword in question.lower() for keyword in viz_keywords)
+            
             # Build synthesis prompt
             synthesis_prompt = f"""You are a helpful assistant that synthesizes information from multiple sources to answer user questions about battery operations and trading.
 
@@ -274,6 +284,7 @@ Please synthesize these results into a clear, coherent answer that:
 5. Uses proper formatting with spaces around numbers and currency (e.g., "$100 revenue", not "$100revenue")
 6. Maintains a professional, expert tone appropriate for Energy Australia operations
 7. **IMPORTANT: Cite the source of information** - When presenting data or numbers, add "(Data Analysis)" at the end of sentences that come from the data results. When presenting concepts, definitions, or explanations from documentation, add "(Documentation)" at the end of those sentences. You can cite multiple sources in a single sentence if it combines both.
+{"8. IMPORTANT: The user requested a visualization/chart. A chart has been generated and will be displayed below your response. Do NOT say you cannot create charts or visualizations - the chart is already created and will appear." if is_viz_request and chart_markers else ""}
 
 Do not include:
 - DEBUG information or debug markers
@@ -281,6 +292,7 @@ Do not include:
 - Raw query result arrays like ['RESS 2', '62.0', '82.7']
 - Page numbers, line numbers, or file paths from documentation
 - Technical implementation details unless relevant to the answer
+{"- Statements saying you cannot create charts or visualizations (the chart is already generated)" if is_viz_request and chart_markers else ""}
 
 Citation format examples:
 - "RESS2 currently has a SoC of 82.7% (Data Analysis)."
