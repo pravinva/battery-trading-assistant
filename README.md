@@ -190,9 +190,13 @@ Show me the revenue performance for all batteries in the last 24 hours
 3. **Unity Catalog Governance**: All tools governed, lineage tracked
 4. **Agent Evaluation**: Built-in quality metrics (retrieval, groundedness, relevance)
 5. **Streamlit UI**: User-friendly chat interface with chart rendering
-6. **Databricks Genie Integration**: Dynamic SQL generation via Genie Conversational API
+6. **Dual Genie Integration**: 
+   - **Genie MCP Server** (Model Context Protocol) - Recommended for production
+   - **Direct Genie API** (Conversational API) - Fallback option
 7. **Performance Optimized**: Fast response times with minimal API calls
 8. **Conversation Context**: Maintains chat history for follow-up questions
+9. **Automatic Routing**: Intelligently routes between MCP and Direct API based on availability
+10. **Execution Logging**: Tracks which method (MCP vs Direct API) is used for each query
 
 ## How the App Works
 
