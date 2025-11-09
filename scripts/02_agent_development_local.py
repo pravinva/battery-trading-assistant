@@ -1704,14 +1704,15 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
         
         if genie_response and genie_response != question:
             # Check if genie_response contains actual answer (not just question)
-            # For data queries: look for numbers/units
+            # For data queries: look for numbers/units OR if we have query_data (results will show numbers)
             # For metadata/descriptive queries: look for meaningful text content
             response_length_check = len(genie_response) > len(question) + 10  # Answer should be longer
             
-            # Check for numeric/data indicators
+            # Check for numeric/data indicators OR if we have query_data (which contains the actual numbers)
             has_numeric_data = bool(re.search(r'\d+', genie_response) or 
                                    'MWh' in genie_response or 'MW' in genie_response or 
-                                   '$' in genie_response or '%' in genie_response)
+                                   '$' in genie_response or '%' in genie_response or
+                                   query_data)  # If we have query_data, we have numeric results
             
             # Check for metadata/descriptive content (table names, column names, etc.)
             # This helps identify when Genie returned metadata even if response is short
@@ -1730,13 +1731,22 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
                 'SHOW' in genie_response.upper()
             )
             
-            # Accept if it's longer than question AND (has numeric data OR has metadata content)
-            # OR if it's a metadata query and has SQL or query_data
+            # Accept if:
+            # 1. It's longer than question AND (has numeric data OR has metadata content)
+            # 2. OR if we have query_data (actual results) - that's a valid answer even if description is short
+            # 3. OR if it's a metadata query and has SQL or query_data
             if response_length_check and (has_numeric_data or has_metadata_content):
                 # This is Genie's actual answer - put it first and make it prominent
                 # Format the text to ensure proper spacing
                 formatted_response = format_response_text(genie_response)
                 response_parts.append(f"{formatted_response}")
+                has_valid_answer = True
+            elif query_data:
+                # If we have query_data, that's a valid answer even if genie_response is short
+                # Use genie_response as description, query_data will be formatted and added
+                if genie_response:
+                    formatted_response = format_response_text(genie_response)
+                    response_parts.append(f"{formatted_response}")
                 has_valid_answer = True
             elif is_metadata_query and (sql_query or query_data):
                 # For metadata queries, SQL or query_data counts as valid answer even if genie_response is short
