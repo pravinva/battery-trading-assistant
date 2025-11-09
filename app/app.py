@@ -648,33 +648,41 @@ def render_response_with_charts(response_text):
     if charts:
         st.markdown("---")
         st.markdown("### 📊 Chart Visualization")
-    for idx, chart_data in enumerate(charts):
-        try:
-            # Recreate Plotly figure from JSON
-            # chart_data structure: {"type": "line", "json": {...}, "title": "..."}
-            # The 'json' field might be a dict or a string
-            chart_json = chart_data.get('json')
-            
-            # chart_json should be a dict with 'data' and 'layout' keys
-            if isinstance(chart_json, dict):
-                # Create figure directly from dict
-                fig = go.Figure(chart_json)
-            elif isinstance(chart_json, str):
-                # Backward compatibility: parse JSON string to dict
-                chart_dict = json.loads(chart_json)
-                fig = go.Figure(chart_dict)
-            else:
-                raise ValueError(f"Chart JSON is neither string nor dict: {type(chart_json)}")
-            
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            # Only show error if DEBUG mode is enabled
-            if os.environ.get("DEBUG", "false").lower() == "true":
-                st.error(f"Could not render chart {idx + 1}: {str(e)}")
-                import traceback
-                st.code(traceback.format_exc(), language='text')
-                st.code(f"Chart data keys: {list(chart_data.keys()) if isinstance(chart_data, dict) else 'N/A'}", language='text')
-                st.code(f"Chart JSON type: {type(chart_data.get('json'))}, value preview: {str(chart_data.get('json', ''))[:200]}", language='text')
+        for idx, chart_data in enumerate(charts):
+            try:
+                # Recreate Plotly figure from JSON
+                # chart_data structure: {"type": "line", "json": {...}, "title": "..."}
+                # The 'json' field might be a dict or a string
+                chart_json = chart_data.get('json')
+                
+                # chart_json should be a dict with 'data' and 'layout' keys
+                if isinstance(chart_json, dict):
+                    # Create figure using data and layout separately
+                    # go.Figure() can take a dict, but we need to ensure proper structure
+                    if 'data' in chart_json and 'layout' in chart_json:
+                        fig = go.Figure(data=chart_json['data'], layout=chart_json.get('layout', {}))
+                    else:
+                        # Fallback: try creating from dict directly
+                        fig = go.Figure(chart_json)
+                elif isinstance(chart_json, str):
+                    # Backward compatibility: parse JSON string to dict
+                    chart_dict = json.loads(chart_json)
+                    if isinstance(chart_dict, dict) and 'data' in chart_dict and 'layout' in chart_dict:
+                        fig = go.Figure(data=chart_dict['data'], layout=chart_dict.get('layout', {}))
+                    else:
+                        fig = go.Figure(chart_dict)
+                else:
+                    raise ValueError(f"Chart JSON is neither string nor dict: {type(chart_json)}")
+                
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                # Only show error if DEBUG mode is enabled
+                if os.environ.get("DEBUG", "false").lower() == "true":
+                    st.error(f"Could not render chart {idx + 1}: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc(), language='text')
+                    st.code(f"Chart data keys: {list(chart_data.keys()) if isinstance(chart_data, dict) else 'N/A'}", language='text')
+                    st.code(f"Chart JSON type: {type(chart_data.get('json'))}, value preview: {str(chart_data.get('json', ''))[:200]}", language='text')
     # No charts found - silently continue (charts are optional)
 
 # Main chat interface
