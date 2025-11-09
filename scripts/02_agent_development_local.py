@@ -1879,7 +1879,6 @@ The agent cannot proceed without Genie's answer."""
         # Embed chart JSON in response if available
         # IMPORTANT: Add chart AFTER all query results to avoid it being included in "Raw Query Results"
         if chart_data:
-            import json
             print(f"DEBUG: ✓ Embedding chart JSON in response (type: {chart_data['type']}, title: {chart_data.get('title', 'N/A')})")
             # chart_data['json'] is already a JSON string, so we need to serialize the whole dict properly
             # json.dumps will automatically escape the inner JSON string
