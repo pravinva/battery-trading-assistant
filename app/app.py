@@ -63,6 +63,9 @@ def load_agent(_file_mtime, _force_reload=False):
             INDEX_NAME = getattr(agent_module, 'INDEX_NAME', None)
             GENIE_ROOM_ID = getattr(agent_module, 'GENIE_ROOM_ID', None) or os.environ.get("GENIE_ROOM_ID", None)
             
+            # Store agent module reference for log access
+            st.session_state.agent_module = agent_module
+            
             # Verify tools list - should only have search_battery_docs and query_genie
             if hasattr(agent_module, 'tools'):
                 tools_list = agent_module.tools
@@ -877,18 +880,9 @@ if AGENT_AVAILABLE:
                                         if 'question' in sql_result.get('args', {}):
                                             st.markdown(f"**Natural Language Question:** {sql_result['args']['question']}")
                                         
-                                        # Get execution logs from already-loaded agent module
+                                        # Get execution logs from agent module stored in session state
                                         try:
-                                            # Access the already-loaded agent module
-                                            agent_module_logs = sys.modules.get('agent_module')
-                                            if not agent_module_logs:
-                                                # Try to find it by checking all modules
-                                                for mod_name, mod in sys.modules.items():
-                                                    if '02_agent' in mod_name or 'agent_module' in mod_name:
-                                                        if hasattr(mod, 'get_genie_logs'):
-                                                            agent_module_logs = mod
-                                                            break
-                                            
+                                            agent_module_logs = st.session_state.get('agent_module')
                                             if agent_module_logs and hasattr(agent_module_logs, 'get_genie_logs'):
                                                 logs = agent_module_logs.get_genie_logs()
                                                 if logs:
