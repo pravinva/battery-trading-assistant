@@ -46,6 +46,14 @@ ENDPOINT_NAME = "one-env-shared-endpoint-10"
 INDEX_NAME = f"{CATALOG}.{SCHEMA}.battery_docs_index"
 LLM_ENDPOINT = "databricks-claude-sonnet-4-5"
 
+# Configuration for Genie
+# Try to get from environment variable, or use default if set
+GENIE_ROOM_ID = os.environ.get("GENIE_ROOM_ID", None)
+if not GENIE_ROOM_ID:
+    # Try to read from a config file or use a default
+    # Default Genie room ID (can be overridden with environment variable)
+    GENIE_ROOM_ID = "01f0bca10415147a91fe3c98f80e596e"  # Battery Trading Agent space
+
 # MCP Configuration
 USE_MCP = os.environ.get("USE_GENIE_MCP", "false").lower() == "true"
 GENIE_MCP_SERVER_URL = os.environ.get("GENIE_MCP_SERVER_URL", None)
@@ -835,9 +843,13 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
     Based on: https://docs.databricks.com/aws/en/generative-ai/mcp/managed-mcp
     Genie MCP server exposes tools that can be discovered via list_tools()
     """
-    global chart_data, result_obj
-    
     DEBUG_MODE = os.environ.get("DEBUG", "false").lower() == "true"
+    
+    # Initialize variables
+    chart_data = None
+    genie_response = None
+    sql_query = None
+    query_data = None
     
     try:
         if DEBUG_MODE:
@@ -850,24 +862,24 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
             print(f"DEBUG: Available MCP tools: {[t.name for t in tools]}")
         
         # Find the Genie query tool
-        # Based on docs, Genie MCP server should expose a tool for querying
-        # Common tool names: "query", "genie_query", "query_genie_space", etc.
+        # Tool name pattern: query_space_{genie_space_id}
         genie_tool = None
-        possible_tool_names = ["query", "genie_query", "query_genie_space", "genie_space_query"]
+        expected_tool_name = f"query_space_{GENIE_ROOM_ID}"
         
         for tool in tools:
-            if tool.name in possible_tool_names or "query" in tool.name.lower() or "genie" in tool.name.lower():
+            if tool.name == expected_tool_name or tool.name.startswith("query_space_"):
                 genie_tool = tool
                 break
         
         if not genie_tool:
-            # If no specific tool found, try the first tool (might be the only one)
-            if tools:
-                genie_tool = tools[0]
-                if DEBUG_MODE:
-                    print(f"DEBUG: Using first available tool: {genie_tool.name}")
-            else:
-                raise Exception("No tools found in Genie MCP server")
+            # Fallback: look for any tool with "query" in the name
+            for tool in tools:
+                if "query" in tool.name.lower():
+                    genie_tool = tool
+                    break
+        
+        if not genie_tool:
+            raise Exception(f"No Genie query tool found. Available tools: {[t.name for t in tools]}")
         
         if DEBUG_MODE:
             print(f"DEBUG: Using tool: {genie_tool.name}")
@@ -875,23 +887,8 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
             print(f"DEBUG: Tool input schema: {genie_tool.inputSchema}")
         
         # Call the Genie tool via MCP
-        # Based on docs, tool arguments depend on the tool's inputSchema
-        # For Genie, typically needs: question/content parameter
-        tool_args = {}
-        
-        # Check tool schema to determine correct argument names
-        schema = genie_tool.inputSchema
-        properties = schema.get("properties", {})
-        
-        # Common parameter names: "question", "content", "query", "text"
-        for param_name in ["question", "content", "query", "text"]:
-            if param_name in properties:
-                tool_args[param_name] = question
-                break
-        
-        # If no standard parameter found, try with "question" anyway
-        if not tool_args:
-            tool_args["question"] = question
+        # Based on discovery, the tool expects: {"query": "..."} and optionally {"conversation_id": "..."}
+        tool_args = {"query": question}
         
         if DEBUG_MODE:
             print(f"DEBUG: Calling tool with args: {tool_args}")
@@ -904,38 +901,196 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
             print(f"DEBUG: MCP tool result: {str(result)[:500]}")
         
         # Extract response from MCP result
-        # MCP tools return ToolResult objects with .content attribute
-        genie_response = None
-        sql_query = None
-        query_data = None
+        # MCP tools return CallToolResult with .content attribute (list of TextContent)
+        conversation_id = None
+        message_id = None
+        columns = None  # Initialize columns at function level
         
         if hasattr(result, 'content'):
-            # ToolResult object
-            genie_response = result.content
-            if isinstance(genie_response, str):
-                # Try to parse JSON if it's a JSON string
-                import json
-                try:
-                    parsed = json.loads(genie_response)
-                    if isinstance(parsed, dict):
-                        genie_response = parsed.get("answer") or parsed.get("response") or genie_response
-                        sql_query = parsed.get("sql") or parsed.get("query")
-                        query_data = parsed.get("data") or parsed.get("results")
-                except:
-                    pass
+            # CallToolResult object with content list
+            content_list = result.content
+            if content_list and len(content_list) > 0:
+                # Get first text content
+                first_content = content_list[0]
+                if hasattr(first_content, 'text'):
+                    content_text = first_content.text
+                    if DEBUG_MODE:
+                        print(f"DEBUG: Content text type: {type(content_text)}")
+                        print(f"DEBUG: Content text preview: {content_text[:200]}")
+                    
+                    # Parse JSON response from Genie MCP server
+                    import json
+                    try:
+                        parsed = json.loads(content_text)
+                        if DEBUG_MODE:
+                            print(f"DEBUG: Parsed JSON keys: {list(parsed.keys()) if isinstance(parsed, dict) else 'Not a dict'}")
+                        
+                        if isinstance(parsed, dict):
+                            # Extract conversation metadata first
+                            conversation_id = parsed.get("conversationId") or parsed.get("conversation_id")
+                            message_id = parsed.get("messageId") or parsed.get("message_id")
+                            
+                            # The "content" field is a JSON string that needs to be parsed again
+                            content_json_str = parsed.get("content")
+                            if content_json_str and isinstance(content_json_str, str):
+                                try:
+                                    # Parse the nested JSON content
+                                    content_parsed = json.loads(content_json_str)
+                                    if isinstance(content_parsed, dict):
+                                        # Extract SQL query
+                                        sql_query = content_parsed.get("query") or content_parsed.get("sql")
+                                        
+                                        # Extract query results from statement_response
+                                        statement_response = content_parsed.get("statement_response")
+                                        if statement_response and isinstance(statement_response, dict):
+                                            # Get SQL query if not already extracted
+                                            if not sql_query:
+                                                sql_query = statement_response.get("query")
+                                            
+                                            # Extract result data
+                                            result_obj = statement_response.get("result")
+                                            if result_obj and isinstance(result_obj, dict):
+                                                data_array = result_obj.get("data_array")
+                                                if data_array:
+                                                    # Convert data_array to list of lists/values
+                                                    query_data = []
+                                                    for row in data_array:
+                                                        if isinstance(row, dict) and "values" in row:
+                                                            # Extract values from row structure
+                                                            row_values = []
+                                                            for val_obj in row["values"]:
+                                                                # Extract the actual value (could be string_value, int_value, etc.)
+                                                                if isinstance(val_obj, dict):
+                                                                    # Get first non-None value
+                                                                    row_values.append(
+                                                                        val_obj.get("string_value") or 
+                                                                        val_obj.get("int_value") or 
+                                                                        val_obj.get("double_value") or 
+                                                                        val_obj.get("bool_value") or
+                                                                        val_obj.get("timestamp_value") or
+                                                                        None
+                                                                    )
+                                                                else:
+                                                                    row_values.append(val_obj)
+                                                            query_data.append(row_values)
+                                                        else:
+                                                            query_data.append(row)
+                                                    
+                                                    # Get column names from manifest
+                                                    manifest = statement_response.get("manifest")
+                                                    if manifest and isinstance(manifest, dict):
+                                                        schema = manifest.get("schema")
+                                                        if schema and isinstance(schema, dict):
+                                                            columns = [col.get("name") for col in schema.get("columns", [])]
+                                                            if columns and query_data:
+                                                                # Convert to list of dicts for easier processing
+                                                                query_data_dicts = []
+                                                                for row in query_data:
+                                                                    query_data_dicts.append(dict(zip(columns, row)))
+                                                                query_data = query_data_dicts
+                                    
+                                    # Extract natural language response (if any) - usually not present in MCP response
+                                    genie_response = content_parsed.get("content") or content_parsed.get("answer") or content_parsed.get("response")
+                                    
+                                    # If no genie_response but we have query results, format them
+                                    if not genie_response and query_data:
+                                        if isinstance(query_data, list) and len(query_data) > 0:
+                                            if isinstance(query_data[0], dict):
+                                                # Format as table
+                                                formatted_rows = []
+                                                if columns:
+                                                    formatted_rows.append(" | ".join(columns))
+                                                    formatted_rows.append(" | ".join(["---"] * len(columns)))
+                                                for row in query_data:
+                                                    formatted_rows.append(" | ".join(str(val) for val in row.values()))
+                                                genie_response = "\n".join(formatted_rows)
+                                            else:
+                                                genie_response = str(query_data)
+                                    
+                                    # If still no response but we have SQL, create a simple response
+                                    if not genie_response and sql_query:
+                                        genie_response = f"Query executed successfully. Results: {str(query_data) if query_data else 'No data returned'}"
+                                except json.JSONDecodeError as e:
+                                    if DEBUG_MODE:
+                                        print(f"DEBUG: Failed to parse nested content JSON: {e}")
+                                    # Use the content string as-is
+                                    genie_response = content_json_str
+                            else:
+                                # No content field or not a string, try to get response from outer level
+                                genie_response = parsed.get("content") or parsed.get("answer") or parsed.get("response")
+                            
+                            # Final fallback: format query results if we have them
+                            if not genie_response and query_data:
+                                if isinstance(query_data, list) and len(query_data) > 0:
+                                    if isinstance(query_data[0], dict):
+                                        # Format as table
+                                        formatted_rows = []
+                                        if columns:
+                                            formatted_rows.append(" | ".join(columns))
+                                            formatted_rows.append(" | ".join(["---"] * len(columns)))
+                                        for row in query_data:
+                                            formatted_rows.append(" | ".join(str(val) for val in row.values()))
+                                        genie_response = "\n".join(formatted_rows)
+                                    else:
+                                        genie_response = str(query_data)
+                            
+                            # Last resort: create response from SQL
+                            if not genie_response and sql_query:
+                                genie_response = f"Query executed successfully. Results: {str(query_data) if query_data else 'No data returned'}"
+                    except json.JSONDecodeError:
+                        # If not JSON, use as plain text
+                        genie_response = content_text
+                elif isinstance(first_content, str):
+                    genie_response = first_content
         elif isinstance(result, dict):
             genie_response = result.get("content") or result.get("answer") or result.get("response") or str(result)
             sql_query = result.get("sql") or result.get("query")
             query_data = result.get("data") or result.get("results")
+            conversation_id = result.get("conversationId") or result.get("conversation_id")
+            message_id = result.get("messageId") or result.get("message_id")
         else:
             genie_response = str(result)
         
+        # If response indicates message is not complete, poll for completion
+        # Check if we need to poll (message might be in progress)
+        if conversation_id and message_id and not genie_response:
+            # Try to find polling tool
+            poll_tool = None
+            poll_tool_name = f"poll_response_{GENIE_ROOM_ID}"
+            for tool in tools:
+                if tool.name == poll_tool_name or tool.name.startswith("poll_response_"):
+                    poll_tool = tool
+                    break
+            
+            if poll_tool:
+                if DEBUG_MODE:
+                    print(f"DEBUG: Polling for message completion using {poll_tool.name}")
+                try:
+                    poll_result = _mcp_client.call_tool(
+                        poll_tool.name,
+                        {"conversation_id": conversation_id, "message_id": message_id}
+                    )
+                    if hasattr(poll_result, 'content') and poll_result.content:
+                        poll_content = poll_result.content[0]
+                        if hasattr(poll_content, 'text'):
+                            import json
+                            try:
+                                parsed = json.loads(poll_content.text)
+                                genie_response = parsed.get("content") or parsed.get("answer") or parsed.get("response")
+                            except:
+                                genie_response = poll_content.text
+                except Exception as e:
+                    if DEBUG_MODE:
+                        print(f"DEBUG: Polling failed: {e}")
+        
         # Handle chart creation if requested
         if is_visualization_request and query_data:
-            columns = None
-            if isinstance(result, dict):
-                columns = result.get("columns")
-            chart_data = create_plotly_chart(query_data, columns, question)
+            columns_list = None
+            # Try to get columns from the parsed data structure
+            if isinstance(query_data, list) and len(query_data) > 0:
+                if isinstance(query_data[0], dict):
+                    columns_list = list(query_data[0].keys())
+            chart_data = create_plotly_chart(query_data, columns_list, question)
         
         # Format response
         response_parts = []
@@ -1357,10 +1512,10 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
                             query_data = query_data.data
                         elif query_data and isinstance(query_data, dict) and 'rows' in query_data:
                             query_data = query_data['rows']
-            except Exception as e:
-                if DEBUG_MODE:
-                    print(f"DEBUG: Error getting query result (legacy): {e}")
-                pass
+        except Exception as e:
+            if DEBUG_MODE:
+                print(f"DEBUG: Error getting query result (legacy): {e}")
+            pass
         
         # Only use this as a last resort if we still don't have an answer
         if not genie_response and message_id:
@@ -1727,15 +1882,10 @@ The agent cannot proceed without Genie's answer."""
         
         response = ''.join(formatted_parts)
         
-        print(f"DEBUG: Final response length: {len(response)}, contains chart markers: {'PLOTLY_CHART_START' in response}")
+        if DEBUG_MODE:
+            print(f"DEBUG: Final response length: {len(response)}, contains chart markers: {'PLOTLY_CHART_START' in response}")
         
         return response
-        
-    except Exception as e:
-        # Don't return error message - raise exception so agent doesn't fall back to other tools
-        error_msg = f"Genie API Error: {str(e)}\n\nPlease ensure:\n1. Genie space 'battery-trading-agent' exists\n2. GENIE_ROOM_ID is set correctly\n3. You have permissions to use the space\n4. Genie API is enabled in your workspace\n\nQuestion asked: {question}"
-        # Raise exception instead of returning error message
-        raise Exception(error_msg)
 
 # Configuration for Genie
 # Try to get from environment variable, or use default if set
