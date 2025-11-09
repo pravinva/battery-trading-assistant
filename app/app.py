@@ -15,6 +15,8 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, Tool
 import importlib.util
 from pathlib import Path
 import json
+import re
+import plotly.graph_objects as go
 
 # Cache agent initialization to avoid reloading on every page refresh
 # Use file modification time to bust cache when file changes
@@ -451,6 +453,113 @@ with st.sidebar:
     if st.button("🗑️ Clear Chat"):
         st.session_state.messages = []
 
+def extract_plotly_charts(response_text):
+    """Extract Plotly chart JSON from response text"""
+    charts = []
+    
+    # Find all chart markers - be more flexible with whitespace and code blocks
+    # Handle cases where markers might be after code block closers (```)
+    # First, try to find markers even if they're inside code blocks or after them
+    pattern = r'(?:```[^\n]*\n)?\[PLOTLY_CHART_START\]\s*(.*?)\s*\[PLOTLY_CHART_END\](?:[^\n]*\n```)?'
+    matches = re.findall(pattern, response_text, re.DOTALL | re.MULTILINE)
+    
+    # Debug: Check if markers are found (silent - no UI messages)
+    # Charts are optional, so don't show warnings if they're not present
+    
+    for idx, match in enumerate(matches):
+        try:
+            # Clean up the match - remove any extra whitespace or code block markers
+            match_clean = match.strip()
+            
+            # Handle nested JSON string (when json field contains a JSON string)
+            # The chart_data structure is: {"type": "line", "json": "{\"data\":[...]}"}
+            # So we need to parse the outer JSON first
+            chart_data = json.loads(match_clean)
+            
+            # Handle nested JSON structure
+            # chart_data might be: {"type": "line", "json": {...}, "title": "..."}
+            # OR: {"type": "line", "json": "{...}", "title": "..."}  (nested JSON string)
+            if isinstance(chart_data, dict) and 'json' in chart_data:
+                chart_json = chart_data.get('json')
+                
+                # If json field is a string, parse it
+                if isinstance(chart_json, str):
+                    try:
+                        chart_json = json.loads(chart_json)
+                        chart_data['json'] = chart_json
+                    except json.JSONDecodeError as parse_err:
+                        # If inner JSON parsing fails, try to extract just the dict part
+                        # Sometimes the JSON string might have extra escaping
+                        try:
+                            # Remove extra escaping
+                            chart_json_clean = chart_json.replace('\\"', '"').replace('\\n', '\n')
+                            chart_json = json.loads(chart_json_clean)
+                            chart_data['json'] = chart_json
+                        except:
+                            # If still fails, keep it as string and let render handle it
+                            pass
+                
+                charts.append(chart_data)
+            else:
+                # Direct chart JSON (unlikely but handle it)
+                charts.append({'json': chart_data})
+            
+            # Chart parsed successfully - no need to show success message
+        except json.JSONDecodeError as e:
+            # Only show error if DEBUG mode is enabled
+            if os.environ.get("DEBUG", "false").lower() == "true":
+                st.error(f"Could not parse chart data {idx + 1}: {e}")
+                st.code(f"Match length: {len(match)}, First 500 chars: {match[:500]}", language='text')
+                # Try to find where the JSON starts
+                json_start = match.find('{')
+                if json_start > 0:
+                    st.code(f"JSON starts at position {json_start}, content: {match[json_start:json_start+200]}", language='text')
+    
+    return charts
+
+def render_response_with_charts(response_text):
+    """Render response text, extracting and displaying any Plotly charts"""
+    charts = extract_plotly_charts(response_text)
+    
+    # Remove chart markers from text
+    cleaned_text = re.sub(r'\[PLOTLY_CHART_START\].*?\[PLOTLY_CHART_END\]', '', response_text, flags=re.DOTALL)
+    
+    # Display cleaned text
+    st.markdown(cleaned_text)
+    
+    # Display charts
+    if charts:
+        st.markdown("---")
+        st.markdown("### 📊 Chart Visualization")
+    for idx, chart_data in enumerate(charts):
+        try:
+            # Recreate Plotly figure from JSON
+            # chart_data structure: {"type": "line", "json": {...}, "title": "..."}
+            # The 'json' field might be a dict or a string
+            chart_json = chart_data.get('json')
+            
+            # chart_json should be a dict with 'data' and 'layout' keys
+            if isinstance(chart_json, dict):
+                # Create figure directly from dict
+                fig = go.Figure(chart_json)
+            elif isinstance(chart_json, str):
+                # Backward compatibility: parse JSON string to dict
+                chart_dict = json.loads(chart_json)
+                fig = go.Figure(chart_dict)
+            else:
+                raise ValueError(f"Chart JSON is neither string nor dict: {type(chart_json)}")
+            
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            # Only show error if DEBUG mode is enabled
+            if os.environ.get("DEBUG", "false").lower() == "true":
+                st.error(f"Could not render chart {idx + 1}: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc(), language='text')
+                st.code(f"Chart data keys: {list(chart_data.keys()) if isinstance(chart_data, dict) else 'N/A'}", language='text')
+                st.code(f"Chart JSON type: {type(chart_data.get('json'))}, value preview: {str(chart_data.get('json', ''))[:200]}", language='text')
+    # No charts found - silently continue (charts are optional)
+
 # Main chat interface
 st.markdown("### 💬 Chat with Assistant")
 
@@ -542,10 +651,26 @@ def extract_sources(response_messages):
     
     return sources
 
+def build_message_history():
+    """Convert Streamlit session state messages to LangChain message objects"""
+    langchain_messages = [SystemMessage(content=SYSTEM_PROMPT)]
+    
+    for msg in st.session_state.messages:
+        if msg["role"] == "user":
+            langchain_messages.append(HumanMessage(content=msg["content"]))
+        elif msg["role"] == "assistant":
+            langchain_messages.append(AIMessage(content=msg["content"]))
+    
+    return langchain_messages
+
 # Display chat history using Streamlit's chat components
 for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+        # Use render_response_with_charts for assistant messages
+        if message["role"] == "assistant":
+            render_response_with_charts(message["content"])
+        else:
+            st.markdown(message["content"])
         
         # Display sources if available
         if message["role"] == "assistant" and "sources" in message:
@@ -596,8 +721,7 @@ if "pending_query" in st.session_state and st.session_state.pending_query:
     prompt = st.session_state.pending_query
     st.session_state.pending_query = None  # Clear it
     
-    # Add user message
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    # Display user message
     with st.chat_message("user"):
         st.markdown(prompt)
     
@@ -605,20 +729,25 @@ if "pending_query" in st.session_state and st.session_state.pending_query:
     with st.chat_message("assistant"):
         with st.spinner("🤔 Thinking..."):
             try:
-                # Invoke agent
+                # Build full conversation history (before adding current prompt to session state)
+                message_history = build_message_history()
+                # Add current prompt to history
+                message_history.append(HumanMessage(content=prompt))
+                
+                # Invoke agent with full conversation history
                 response = agent.invoke({
-                    "messages": [
-                        SystemMessage(content=SYSTEM_PROMPT),
-                        HumanMessage(content=prompt)
-                    ]
+                    "messages": message_history
                 })
+                
+                # NOW add user message to session state (after agent invocation)
+                st.session_state.messages.append({"role": "user", "content": prompt})
                 
                 # Extract sources
                 sources = extract_sources(response["messages"])
                 
                 # Get assistant response
                 assistant_response = response["messages"][-1].content
-                st.markdown(assistant_response)
+                render_response_with_charts(assistant_response)
                 
                 # Display sources
                 if sources["tools_used"]:
@@ -658,8 +787,7 @@ if "pending_query" in st.session_state and st.session_state.pending_query:
 # Chat input - process immediately
 if AGENT_AVAILABLE:
     if prompt := st.chat_input("Ask a question about battery operations, trading, or technical documentation..."):
-        # Add user message
-        st.session_state.messages.append({"role": "user", "content": prompt})
+        # Display user message
         with st.chat_message("user"):
             st.markdown(prompt)
         
@@ -667,20 +795,25 @@ if AGENT_AVAILABLE:
         with st.chat_message("assistant"):
             with st.spinner("🤔 Thinking..."):
                 try:
-                    # Invoke agent
+                    # Build full conversation history (before adding current prompt to session state)
+                    message_history = build_message_history()
+                    # Add current prompt to history
+                    message_history.append(HumanMessage(content=prompt))
+                    
+                    # Invoke agent with full conversation history
                     response = agent.invoke({
-                        "messages": [
-                            SystemMessage(content=SYSTEM_PROMPT),
-                            HumanMessage(content=prompt)
-                        ]
+                        "messages": message_history
                     })
+                    
+                    # NOW add user message to session state (after agent invocation)
+                    st.session_state.messages.append({"role": "user", "content": prompt})
                     
                     # Extract sources
                     sources = extract_sources(response["messages"])
                     
                     # Get assistant response
                     assistant_response = response["messages"][-1].content
-                    st.markdown(assistant_response)
+                    render_response_with_charts(assistant_response)
                     
                     # Display sources
                     if sources["tools_used"]:

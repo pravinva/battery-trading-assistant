@@ -72,6 +72,412 @@ print("=" * 80)
 print("Battery Trading Agent Development")
 print("=" * 80)
 
+def format_response_text(text):
+    """Clean and format response text to ensure proper spacing around numbers and currency"""
+    if not text:
+        return text
+    
+    import re
+    # Fix spacing around currency symbols and numbers
+    # Add space before $ if it's attached to a word: "revenue$100" -> "revenue $100"
+    text = re.sub(r'([a-zA-Z])(\$)', r'\1 \2', text)
+    # Add space after $number before letter: "$100revenue" -> "$100 revenue"
+    text = re.sub(r'(\$[\d,]+\.?\d*)([a-zA-Z])', r'\1 \2', text)
+    
+    # Fix spacing around negative numbers: "-700to" -> "-700 to"
+    text = re.sub(r'(-[\d,]+\.?\d*)([a-zA-Z])', r'\1 \2', text)
+    # Fix spacing before negative numbers: "exceeding-" -> "exceeding -"
+    text = re.sub(r'([a-zA-Z])(-[\d,]+\.?\d*)', r'\1 \2', text)
+    
+    # Fix spacing around numbers: "700to" -> "700 to", "650exceeding" -> "650 exceeding"
+    text = re.sub(r'(\d+)([a-zA-Z])', r'\1 \2', text)  # Number followed by letter
+    text = re.sub(r'([a-zA-Z])(\d+)', r'\1 \2', text)  # Letter followed by number
+    
+    # Fix specific patterns like "700togainsexceeding650" -> "700 to gains exceeding 650"
+    text = re.sub(r'(\d+)(to)([a-zA-Z]+)', r'\1 \2 \3', text, flags=re.IGNORECASE)
+    text = re.sub(r'([a-zA-Z]+)(exceeding)(\d+)', r'\1 \2 \3', text, flags=re.IGNORECASE)
+    text = re.sub(r'(\d+)(exceeding)(\d+)', r'\1 \2 \3', text, flags=re.IGNORECASE)
+    
+    # Fix multiple spaces
+    text = re.sub(r' +', ' ', text)
+    
+    # Fix spacing around common patterns
+    text = re.sub(r'(\d+)\s*(to|and|or)\s*([a-zA-Z])', r'\1 \2 \3', text)
+    text = re.sub(r'([a-zA-Z])\s*(to|and|or)\s*(\d+)', r'\1 \2 \3', text)
+    
+    return text.strip()
+
+# Helper function to create Plotly charts from query data
+def create_plotly_chart(query_data, columns, question):
+    """Create a Plotly chart from query results based on the question context"""
+    try:
+        import plotly.graph_objects as go
+        import plotly.express as px
+        import pandas as pd
+        import json
+        
+        if not query_data or len(query_data) == 0:
+            return None
+        
+        # Convert to DataFrame
+        df = None
+        if isinstance(query_data, list):
+            if isinstance(query_data[0], (list, tuple)):
+                # Array of arrays
+                # CRITICAL: Use provided columns, or generate better defaults
+                if columns and len(columns) > 0:
+                    df = pd.DataFrame(query_data, columns=columns)
+                else:
+                    # Generate better default column names based on data
+                    num_cols = len(query_data[0])
+                    default_cols = []
+                    for i in range(num_cols):
+                        # Try to infer column type from first few values
+                        sample_vals = [row[i] for row in query_data[:5] if i < len(row)]
+                        if any('date' in str(v).lower() or 'time' in str(v).lower() for v in sample_vals if v):
+                            default_cols.append('date' if i == 0 else f'value_{i}')
+                        elif any(isinstance(v, (int, float)) or (isinstance(v, str) and v.replace('.', '').replace('-', '').isdigit()) for v in sample_vals if v):
+                            default_cols.append(f'value_{i}' if i > 0 else 'index')
+                        else:
+                            default_cols.append(f'column_{i}')
+                    df = pd.DataFrame(query_data, columns=default_cols)
+                    print(f"DEBUG: Using default columns: {default_cols}")
+            elif isinstance(query_data[0], dict):
+                # Array of dicts
+                df = pd.DataFrame(query_data)
+            else:
+                return None
+        elif isinstance(query_data, dict):
+            if 'rows' in query_data:
+                df = pd.DataFrame(query_data['rows'], columns=columns if columns else None)
+            elif 'data' in query_data:
+                df = pd.DataFrame(query_data['data'])
+            else:
+                return None
+        
+        if df is None or df.empty:
+            return None
+        
+        # Debug: Print column names
+        print(f"DEBUG: DataFrame columns: {list(df.columns)}")
+        
+        # Convert string numeric columns to actual numbers
+        # BUT preserve date/timestamp columns - don't convert them to numeric
+        # This is important because SQL results often come as strings
+        date_cols = [col for col in df.columns if any(term in col.lower() for term in ['date', 'time', 'timestamp', 'interval'])]
+        for col in df.columns:
+            # Skip date columns - keep them as strings/datetime
+            if col in date_cols:
+                # Try to convert to datetime if it's a string
+                if df[col].dtype == 'object':
+                    try:
+                        df[col] = pd.to_datetime(df[col], errors='coerce')
+                    except:
+                        pass  # Keep as string if conversion fails
+                continue
+            
+            # Try to convert to numeric, keeping original if it fails
+            numeric_series = pd.to_numeric(df[col], errors='coerce')
+            # If conversion succeeded for at least some values, use it
+            if not numeric_series.isna().all():
+                df[col] = numeric_series
+        
+        # Determine chart type based on question and data
+        question_lower = question.lower()
+        chart_type = None
+        
+        # Time series chart
+        # Check for time-related keywords OR if we have date/time columns
+        has_time_keywords = any(word in question_lower for word in ['over time', 'trend', 'history', 'last', 'hour', 'day', 'week', 'by day', 'by hour'])
+        time_cols = [col for col in df.columns if any(term in col.lower() for term in ['time', 'date', 'timestamp', 'interval'])]
+        
+        if has_time_keywords or time_cols:
+            # Look for timestamp/date column
+            if time_cols:
+                chart_type = 'line'
+                x_col = time_cols[0]
+                # Find numeric columns for y-axis
+                numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+                if numeric_cols:
+                    y_col = numeric_cols[0]
+                    # Generate better title from question or column names
+                    title = f"{y_col.replace('_', ' ').title()} Over Time"
+                    if 'revenue' in question_lower and 'hourly' in question_lower:
+                        title = "Maximum Hourly Revenue by Day"
+                    elif 'revenue' in question_lower:
+                        title = "Revenue Over Time"
+                    elif 'soc' in question_lower or 'state of charge' in question_lower:
+                        title = "State of Charge Over Time"
+                    
+                    # Create line chart with proper line rendering, colors, and axis labels
+                    x_label = x_col.replace('_', ' ').title()
+                    y_label = y_col.replace('_', ' ').title()
+                    fig = px.line(df, x=x_col, y=y_col, 
+                                 title=title,
+                                 labels={x_col: x_label, y_col: y_label},
+                                 color_discrete_sequence=px.colors.qualitative.Set1)
+                    # Ensure lines are visible, not just markers
+                    fig.update_traces(mode='lines+markers', line=dict(width=2))
+                    # Explicitly set axis titles to ensure they're preserved
+                    fig.update_xaxes(title_text=x_label)
+                    fig.update_yaxes(title_text=y_label)
+                else:
+                    return None
+            else:
+                # No time column found, but question suggests time series
+                # Use first column as x-axis and first numeric as y-axis
+                if len(df.columns) >= 2:
+                    x_col = df.columns[0]
+                    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+                    if numeric_cols:
+                        y_col = numeric_cols[0]
+                        chart_type = 'line'
+                        # Generate better title from question or column names
+                        title = f"{y_col.replace('_', ' ').title()} by {x_col.replace('_', ' ').title()}"
+                        if 'revenue' in question_lower and 'hourly' in question_lower:
+                            title = "Maximum Hourly Revenue by Day"
+                        elif 'revenue' in question_lower:
+                            title = "Revenue Over Time"
+                        elif 'soc' in question_lower or 'state of charge' in question_lower:
+                            title = "State of Charge Over Time"
+                        
+                        x_label = x_col.replace('_', ' ').title()
+                        y_label = y_col.replace('_', ' ').title()
+                        fig = px.line(df, x=x_col, y=y_col, 
+                                     title=title,
+                                     labels={x_col: x_label, y_col: y_label},
+                                     color_discrete_sequence=px.colors.qualitative.Set1)
+                        # Ensure lines are visible
+                        fig.update_traces(mode='lines+markers', line=dict(width=2))
+                        # Explicitly set axis titles
+                        fig.update_xaxes(title_text=x_label)
+                        fig.update_yaxes(title_text=y_label)
+                    else:
+                        return None
+                else:
+                    # Single column - use index as x-axis (shouldn't happen for time series)
+                    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+                    if len(numeric_cols) >= 1:
+                        chart_type = 'line'
+                        y_col = numeric_cols[0]
+                        # Generate better title
+                        title = f"{y_col.replace('_', ' ').title()} Over Time"
+                        if 'revenue' in question_lower and 'hourly' in question_lower:
+                            title = "Maximum Hourly Revenue by Day"
+                        elif 'revenue' in question_lower:
+                            title = "Revenue Over Time"
+                        
+                        # Use first non-numeric column as x-axis if available, otherwise use index
+                        non_numeric_cols = [col for col in df.columns if col not in numeric_cols]
+                        if non_numeric_cols:
+                            x_col = non_numeric_cols[0]
+                            x_label = x_col.replace('_', ' ').title()
+                            fig = px.line(df, x=x_col, y=y_col, 
+                                         title=title,
+                                         labels={x_col: x_label, y_col: y_col.replace('_', ' ').title()},
+                                         color_discrete_sequence=px.colors.qualitative.Set1)
+                        else:
+                            x_label = 'Day' if 'day' in question_lower else 'Index'
+                            y_label = y_col.replace('_', ' ').title()
+                            fig = px.line(df, y=y_col, 
+                                         title=title,
+                                         labels={'index': x_label, y_col: y_label},
+                                         color_discrete_sequence=px.colors.qualitative.Set1)
+                        # Ensure lines are visible
+                        fig.update_traces(mode='lines+markers', line=dict(width=2))
+                        # Explicitly set axis titles
+                        fig.update_xaxes(title_text=x_label)
+                        fig.update_yaxes(title_text=y_label)
+                    else:
+                        return None
+        
+        # Bar chart for comparisons
+        elif any(word in question_lower for word in ['compare', 'comparison', 'by battery', 'each battery', 'across', 'revenue']):
+            # Look for categorical column (battery_id, etc.)
+            cat_cols = [col for col in df.columns if any(term in col.lower() for term in ['battery', 'id', 'name', 'site'])]
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            
+            if cat_cols and numeric_cols:
+                chart_type = 'bar'
+                x_col = cat_cols[0]
+                y_col = numeric_cols[0]
+                # Create bar chart with colors
+                fig = px.bar(df, x=x_col, y=y_col, 
+                            title=f"{y_col.replace('_', ' ').title()} by {x_col.replace('_', ' ').title()}",
+                            color=x_col,
+                            color_discrete_sequence=px.colors.qualitative.Set2)
+            elif len(df.columns) >= 2:
+                chart_type = 'bar'
+                # Try to identify which column is numeric
+                numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+                if numeric_cols:
+                    y_col = numeric_cols[0]
+                    x_col = [col for col in df.columns if col != y_col][0]
+                else:
+                    x_col = df.columns[0]
+                    y_col = df.columns[1]
+                    # Force convert y to numeric
+                    df[y_col] = pd.to_numeric(df[y_col], errors='coerce')
+                # Create bar chart with colors
+                fig = px.bar(df, x=x_col, y=y_col, 
+                            title=f"{y_col.replace('_', ' ').title()} by {x_col.replace('_', ' ').title()}",
+                            color=x_col,
+                            color_discrete_sequence=px.colors.qualitative.Set2)
+            else:
+                return None
+        
+        # Pie chart for distribution
+        elif any(word in question_lower for word in ['distribution', 'proportion', 'percentage', 'share']):
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            cat_cols = [col for col in df.columns if col not in numeric_cols]
+            
+            if cat_cols and numeric_cols:
+                chart_type = 'pie'
+                fig = px.pie(df, names=cat_cols[0], values=numeric_cols[0], 
+                            title=f"Distribution of {numeric_cols[0].replace('_', ' ').title()}",
+                            color_discrete_sequence=px.colors.qualitative.Set3)
+            else:
+                return None
+        
+        # Default: bar chart for first two columns (most common case)
+        else:
+            if len(df.columns) >= 2:
+                chart_type = 'bar'
+                # Try to identify which column is numeric
+                numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+                if numeric_cols:
+                    y_col = numeric_cols[0]
+                    x_col = [col for col in df.columns if col != y_col][0]
+                else:
+                    x_col = df.columns[0]
+                    y_col = df.columns[1]
+                    # Force convert y to numeric
+                    df[y_col] = pd.to_numeric(df[y_col], errors='coerce')
+                # Create bar chart with colors
+                fig = px.bar(df, x=x_col, y=y_col, 
+                            title=f"{y_col.replace('_', ' ').title()} by {x_col.replace('_', ' ').title()}",
+                            color=x_col,
+                            color_discrete_sequence=px.colors.qualitative.Set2)
+            elif len(df.columns) == 1 and len(df) > 1:
+                # Single column with multiple rows - create simple bar chart
+                chart_type = 'bar'
+                col = df.columns[0]
+                # Convert to numeric if possible
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                fig = px.bar(df, y=col, 
+                            title=f"{col.replace('_', ' ').title()}",
+                            color_discrete_sequence=px.colors.qualitative.Set2)
+            else:
+                return None
+        
+        # Convert to JSON for embedding in response
+        # Extract only essential, JSON-serializable attributes from traces
+        import numpy as np
+        
+        def convert_to_json_serializable(obj):
+            """Convert numpy arrays and other non-serializable objects to JSON-compatible types"""
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, (np.integer, np.floating)):
+                return float(obj)
+            elif isinstance(obj, pd.Timestamp):
+                return str(obj)
+            elif isinstance(obj, dict):
+                return {k: convert_to_json_serializable(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_to_json_serializable(item) for item in obj]
+            elif isinstance(obj, tuple):
+                return [convert_to_json_serializable(item) for item in obj]
+            # Skip Plotly-specific objects that aren't serializable
+            elif hasattr(obj, '__class__') and 'plotly' in str(type(obj)).lower():
+                return None
+            return obj
+        
+        # Build chart data structure manually - only include essential attributes
+        chart_data = {
+            'data': [],
+            'layout': {}
+        }
+        
+        # Essential trace attributes to extract
+        essential_trace_attrs = ['x', 'y', 'type', 'mode', 'name', 'marker', 'line', 
+                                'hovertemplate', 'showlegend', 'legendgroup', 'orientation']
+        
+        # Extract data from each trace - only essential attributes
+        for trace in fig.data:
+            trace_dict = {}
+            for attr in essential_trace_attrs:
+                try:
+                    value = getattr(trace, attr, None)
+                    if value is not None:
+                        converted = convert_to_json_serializable(value)
+                        if converted is not None:
+                            trace_dict[attr] = converted
+                except:
+                    pass
+            
+            chart_data['data'].append(trace_dict)
+        
+        # Essential layout attributes
+        essential_layout_attrs = ['title', 'xaxis', 'yaxis', 'legend', 'template', 
+                                 'colorway', 'colorscale', 'hovermode']
+        
+        # Extract layout data - only essential attributes
+        layout_dict = {}
+        for attr in essential_layout_attrs:
+            try:
+                value = getattr(fig.layout, attr, None)
+                if value is not None:
+                    converted = convert_to_json_serializable(value)
+                    if converted is not None:
+                        layout_dict[attr] = converted
+            except:
+                pass
+        
+        # Handle title specially (it's a Title object)
+        if hasattr(fig.layout, 'title') and fig.layout.title:
+            if hasattr(fig.layout.title, 'text'):
+                layout_dict['title'] = {'text': str(fig.layout.title.text)}
+        
+        # Ensure xaxis and yaxis have proper titles
+        # Plotly Express sets these in labels, but we need to preserve them in layout
+        if hasattr(fig.layout, 'xaxis') and fig.layout.xaxis:
+            xaxis_dict = {}
+            if hasattr(fig.layout.xaxis, 'title') and fig.layout.xaxis.title:
+                if hasattr(fig.layout.xaxis.title, 'text'):
+                    xaxis_dict['title'] = {'text': str(fig.layout.xaxis.title.text)}
+            if not xaxis_dict.get('title'):
+                # Try to get from labels if title wasn't set
+                if hasattr(fig, 'data') and len(fig.data) > 0:
+                    # Get x-axis label from first trace if available
+                    pass  # Will use default from column name
+            if xaxis_dict:
+                layout_dict['xaxis'] = xaxis_dict
+        
+        if hasattr(fig.layout, 'yaxis') and fig.layout.yaxis:
+            yaxis_dict = {}
+            if hasattr(fig.layout.yaxis, 'title') and fig.layout.yaxis.title:
+                if hasattr(fig.layout.yaxis.title, 'text'):
+                    yaxis_dict['title'] = {'text': str(fig.layout.yaxis.title.text)}
+            if yaxis_dict:
+                layout_dict['yaxis'] = yaxis_dict
+        
+        chart_data['layout'] = layout_dict
+        
+        # Return chart_data dict directly - don't serialize it yet
+        # Serialization will happen when embedding in the response
+        return {
+            'type': chart_type,
+            'json': chart_data,  # Return the dict with 'data' and 'layout', not a JSON string
+            'title': fig.layout.title.text if hasattr(fig.layout, 'title') and fig.layout.title and hasattr(fig.layout.title, 'text') else 'Chart'
+        }
+        
+    except Exception as e:
+        print(f"DEBUG: Error creating Plotly chart: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
 # Helper function to execute SQL
 def execute_sql(query: str) -> list:
     """Execute SQL query and return results as list of dicts"""
@@ -288,41 +694,58 @@ def query_genie(
     
     Returns Genie's response with query results."""
     
-    # Initialize debug log - MUST be first thing, write immediately
+    # Check if this query should have a visualization - ONLY if explicitly requested
+    import re
+    # Explicit visualization keywords only
+    explicit_viz_keywords = ['plot', 'chart', 'graph', 'visualize', 'visualization', 'show me a', 'display a', 'create a']
+    is_visualization_request = any(keyword in question.lower() for keyword in explicit_viz_keywords)
+    
+    # Initialize chart_data and result storage at function level to avoid scoping issues
+    chart_data = None
+    result_obj = None  # Store result object for column extraction
+    
+    # Initialize debug log - OPTIMIZED: Only write if DEBUG env var is set
     debug_log_path = "/tmp/genie_debug.log"
     import json
     import time
     import sys
     
-    # Write immediately with force flush
-    log_entry = f"\n{'='*80}\nNEW QUERY_GENIE CALL - {time.strftime('%Y-%m-%d %H:%M:%S')}\nQuestion: {question}\nGENIE_ROOM_ID: {GENIE_ROOM_ID if 'GENIE_ROOM_ID' in globals() else 'NOT SET'}\n{'='*80}\n"
+    # Only do extensive debug logging if DEBUG environment variable is set
+    DEBUG_MODE = os.environ.get("DEBUG", "false").lower() == "true"
     
-    # Print to console FIRST (this always works)
-    print(f"\n{'='*80}", flush=True)
-    print(f"DEBUG: query_genie CALLED", flush=True)
-    print(f"DEBUG: Question: {question}", flush=True)
-    print(f"DEBUG: Logging to: {debug_log_path}", flush=True)
-    print(f"{'='*80}", flush=True)
-    
-    # Also write to stderr (Streamlit might capture stdout)
-    import sys
-    print(f"DEBUG: query_genie CALLED - Question: {question}", file=sys.stderr, flush=True)
-    
-    # Then write to file
-    try:
-        with open(debug_log_path, "a", encoding='utf-8') as f:
-            f.write(log_entry)
-            f.flush()
-            try:
-                os.fsync(f.fileno())  # Force OS-level flush
-            except:
-                pass
-        print(f"DEBUG: Successfully wrote to {debug_log_path}", flush=True)
-    except Exception as e:
-        print(f"DEBUG: ERROR writing to debug log: {e}", flush=True)
-        import traceback
-        traceback.print_exc()
-        # Continue anyway - don't let logging failure break the function
+    if DEBUG_MODE:
+        # Write immediately with force flush
+        log_entry = f"\n{'='*80}\nNEW QUERY_GENIE CALL - {time.strftime('%Y-%m-%d %H:%M:%S')}\nQuestion: {question}\nGENIE_ROOM_ID: {GENIE_ROOM_ID if 'GENIE_ROOM_ID' in globals() else 'NOT SET'}\n{'='*80}\n"
+        
+        # Print to console FIRST (this always works)
+        print(f"\n{'='*80}", flush=True)
+        print(f"DEBUG: query_genie CALLED", flush=True)
+        print(f"DEBUG: Question: {question}", flush=True)
+        print(f"DEBUG: Is visualization request: {is_visualization_request}", flush=True)
+        print(f"DEBUG: Logging to: {debug_log_path}", flush=True)
+        print(f"{'='*80}", flush=True)
+        
+        # Also write to stderr (Streamlit might capture stdout)
+        print(f"DEBUG: query_genie CALLED - Question: {question}", file=sys.stderr, flush=True)
+        
+        # Then write to file
+        try:
+            with open(debug_log_path, "a", encoding='utf-8') as f:
+                f.write(log_entry)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())  # Force OS-level flush
+                except:
+                    pass
+            print(f"DEBUG: Successfully wrote to {debug_log_path}", flush=True)
+        except Exception as e:
+            print(f"DEBUG: ERROR writing to debug log: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            # Continue anyway - don't let logging failure break the function
+    else:
+        # Minimal logging in production
+        print(f"DEBUG: query_genie - {question[:50]}...", flush=True)
     
     try:
         if not GENIE_ROOM_ID:
@@ -343,23 +766,44 @@ Question asked: {question}"""
         # Use positional arguments as shown in the signature
         conversation_wait = genie.start_conversation(GENIE_ROOM_ID, question)
         
-        # Wait for the conversation to complete and get the message
-        # Wait objects in Databricks SDK can be used directly or awaited
+        # OPTIMIZED: Use Wait object's built-in waiting mechanism instead of manual polling
+        # This is much faster than manual polling
         message = None
         try:
-            # Try calling result() if it exists
-            if callable(getattr(conversation_wait, 'result', None)):
-                message = conversation_wait.result()
-            # Try iterating (Wait objects are iterable)
-            elif hasattr(conversation_wait, '__iter__'):
-                # Get the last item from the iterator
-                for msg in conversation_wait:
-                    message = msg
-            else:
-                # If it's already resolved, use it directly
+            # Try to use Wait object's result() method
+            # Note: Wait.result() might not accept timeout parameter, so try without it first
+            if hasattr(conversation_wait, 'result'):
+                try:
+                    # Try without timeout first
+                    message = conversation_wait.result()
+                except TypeError:
+                    # If it requires timeout, try with timedelta
+                    try:
+                        from datetime import timedelta
+                        message = conversation_wait.result(timeout=timedelta(seconds=60))
+                    except Exception as e:
+                        print(f"DEBUG: Wait.result() failed: {e}")
+                        pass
+                except Exception as e:
+                    print(f"DEBUG: Wait.result() failed or timed out: {e}")
+                    # Fall back to manual polling if Wait object doesn't work
+                    pass
+            
+            # If Wait object didn't work, try iterating (some Wait objects are iterable)
+            if not message and hasattr(conversation_wait, '__iter__'):
+                try:
+                    # Get the last message from iterator
+                    for msg in conversation_wait:
+                        message = msg
+                except Exception as e:
+                    print(f"DEBUG: Wait iteration failed: {e}")
+            
+            # If still no message, use it directly (might already be resolved)
+            if not message:
                 message = conversation_wait
+                
         except Exception as e:
-            # If Wait handling fails, try to use it directly
+            print(f"DEBUG: Error handling Wait object: {e}")
             message = conversation_wait
         
         # Extract message ID to fetch detailed results FIRST
@@ -378,659 +822,251 @@ Question asked: {question}"""
         elif isinstance(message, dict):
             conversation_id = message.get('conversation_id')
         
-        # Poll for message status following Genie API best practices
-        # Poll every 1-5 seconds with exponential backoff, max 2 minutes for UI responsiveness
+        # OPTIMIZED: Check message status only if Wait object didn't give us a completed message
+        # Most of the time, the Wait object will have already waited for completion
         import time
-        max_poll_time = 120  # 2 minutes max (reduced for UI responsiveness)
-        poll_interval = 2  # Start with 2 seconds
-        max_poll_interval = 10  # Max 10 seconds between polls (reduced from 60)
-        start_time = time.time()
-        
         if message_id and GENIE_ROOM_ID:
+            # Quick check: if message is already completed, skip polling
+            # Use try/except instead of hasattr because Databricks SDK raises KeyError
             message_status = None
-            message_details = None
-            poll_count = 0
-            
-            while time.time() - start_time < max_poll_time:
+            try:
+                message_status = message.status
+            except (AttributeError, KeyError):
                 try:
-                    poll_count += 1
-                    # Get message status - requires conversation_id
-                    message_details = genie.get_message(space_id=GENIE_ROOM_ID, conversation_id=conversation_id, message_id=message_id)
-                    
-                    # Extract status
-                    if hasattr(message_details, 'status'):
-                        message_status = message_details.status
-                    elif isinstance(message_details, dict):
-                        message_status = message_details.get('status')
-                    
-                    elapsed = int(time.time() - start_time)
-                    print(f"DEBUG: Poll #{poll_count} [{elapsed}s] Status: {message_status}")
-                    
-                    # Check if message is in a conclusive state
-                    # Handle both string and MessageStatus enum
-                    status_str = str(message_status)
-                    if (message_status in ['COMPLETED', 'FAILED', 'CANCELLED'] or 
-                        status_str in ['MessageStatus.COMPLETED', 'MessageStatus.FAILED', 'MessageStatus.CANCELLED'] or
-                        'COMPLETED' in status_str or 'FAILED' in status_str or 'CANCELLED' in status_str):
-                        message = message_details  # Use the completed message
-                        print(f"DEBUG: Message reached conclusive state: {message_status}")
-                        break
-                    
-                    # Wait before next poll with exponential backoff
-                    wait_time = min(poll_interval, max_poll_interval)
-                    print(f"DEBUG: Waiting {wait_time}s before next poll...")
-                    time.sleep(wait_time)
-                    poll_interval = min(poll_interval * 1.5, max_poll_interval)  # Exponential backoff
-                    
-                except Exception as e:
-                    print(f"DEBUG: Error polling message status: {e}")
-                    # Continue polling on error
-                    wait_time = min(poll_interval, max_poll_interval)
-                    time.sleep(wait_time)
-                    poll_interval = min(poll_interval * 1.5, max_poll_interval)
+                    if isinstance(message, dict):
+                        message_status = message.get('status')
+                except:
+                    pass
             
-            if message_status not in ['COMPLETED', 'FAILED', 'CANCELLED']:
-                elapsed = int(time.time() - start_time)
-                print(f"DEBUG: Polling timeout after {elapsed} seconds, status: {message_status}")
-                # Use the last message_details we got, even if not completed
-                if message_details:
-                    message = message_details
-        else:
-            # If no message_id, wait a bit
-            print("DEBUG: No message_id, waiting 5 seconds...")
-            time.sleep(5)
+            status_str = str(message_status) if message_status else ''
+            is_completed = False
+            try:
+                is_completed = (message_status in ['COMPLETED', 'FAILED', 'CANCELLED'] or 
+                              status_str in ['MessageStatus.COMPLETED', 'MessageStatus.FAILED', 'MessageStatus.CANCELLED'] or
+                              'COMPLETED' in status_str or 'FAILED' in status_str or 'CANCELLED' in status_str)
+            except Exception as e:
+                # If status comparison fails, assume not completed and continue
+                print(f"DEBUG: Error checking status: {e}, message_status type: {type(message_status)}")
+                is_completed = False
+            
+            if not is_completed:
+                # Only poll if message isn't already completed (fallback case)
+                # Use shorter, faster polling
+                max_poll_time = 30  # Reduced to 30 seconds
+                poll_interval = 1  # Start with 1 second
+                max_poll_interval = 3  # Max 3 seconds between polls
+                start_time = time.time()
+                poll_count = 0
+                
+                while time.time() - start_time < max_poll_time:
+                    try:
+                        poll_count += 1
+                        message_details = genie.get_message(space_id=GENIE_ROOM_ID, conversation_id=conversation_id, message_id=message_id)
+                        
+                        # Use try/except instead of hasattr because Databricks SDK raises KeyError
+                        message_status = None
+                        try:
+                            message_status = message_details.status
+                        except (AttributeError, KeyError):
+                            try:
+                                if isinstance(message_details, dict):
+                                    message_status = message_details.get('status')
+                            except:
+                                pass
+                        
+                        status_str = str(message_status) if message_status else ''
+                        is_completed = False
+                        try:
+                            is_completed = (message_status in ['COMPLETED', 'FAILED', 'CANCELLED'] or 
+                                          status_str in ['MessageStatus.COMPLETED', 'MessageStatus.FAILED', 'MessageStatus.CANCELLED'] or
+                                          'COMPLETED' in status_str or 'FAILED' in status_str or 'CANCELLED' in status_str)
+                        except Exception as e:
+                            print(f"DEBUG: Error checking status in poll: {e}, message_status type: {type(message_status)}")
+                            is_completed = False
+                        
+                        if is_completed:
+                            message = message_details
+                            print(f"DEBUG: Message completed after {poll_count} polls")
+                            break
+                        
+                        time.sleep(min(poll_interval, max_poll_interval))
+                        poll_interval = min(poll_interval * 1.2, max_poll_interval)  # Gentler backoff
+                    except Exception as e:
+                        print(f"DEBUG: Error polling: {e}")
+                        time.sleep(1)
         
-        # Try to get the full message details including SQL and results
+        # OPTIMIZED: Extract everything directly from the message returned by start_conversation
+        # The Wait object already returns the completed message with all attachments
+        # No need for list_conversation_messages or get_message calls
         sql_query = None
         genie_response = None
         query_data = None
+        result_obj = None
         
-        # First, try to get the assistant's response from conversation messages
-        # Wait a bit more for Genie to process - per docs, poll every 1-5 seconds
-        time.sleep(2)
+        # Extract attachments directly from the message (this is where Genie's response is)
+        attachments = None
+        if hasattr(message, 'attachments'):
+            attachments = message.attachments
+        elif isinstance(message, dict):
+            attachments = message.get('attachments')
         
-        if conversation_id and GENIE_ROOM_ID:
+        # If we don't have attachments yet, try get_message as fallback (should rarely happen)
+        if not attachments and message_id and conversation_id and GENIE_ROOM_ID:
             try:
-                # list_conversation_messages requires space_id as first positional argument
-                # Per docs: Use this to retrieve all messages from a conversation
-                messages = genie.list_conversation_messages(GENIE_ROOM_ID, conversation_id=conversation_id)
-                print(f"DEBUG: list_conversation_messages returned: {type(messages)}")
-                
-                # Log full response to debug file
-                try:
-                    with open(debug_log_path, "a", encoding='utf-8') as f:
-                        f.write(f"\nlist_conversation_messages response:\n")
-                        f.write(f"Type: {type(messages)}\n")
-                        if hasattr(messages, '__dict__'):
-                            f.write(f"Keys: {list(messages.__dict__.keys())}\n")
-                        f.flush()
-                        os.fsync(f.fileno())
-                except:
-                    pass
-                
-                if messages:
-                    # Handle different response structures
-                    msg_list = None
-                    if hasattr(messages, 'messages'):
-                        msg_list = messages.messages
-                    elif hasattr(messages, 'items'):
-                        msg_list = messages.items
-                    elif isinstance(messages, list):
-                        msg_list = messages
-                    
-                    print(f"DEBUG: Message list type: {type(msg_list)}, length: {len(msg_list) if msg_list else 0}")
-                    
-                    # Log all messages to debug file
-                    try:
-                        with open(debug_log_path, "a", encoding='utf-8') as f:
-                            f.write(f"\nFound {len(msg_list) if msg_list else 0} message(s) in conversation\n")
-                            if msg_list:
-                                for idx, msg in enumerate(msg_list):
-                                    f.write(f"\nMessage {idx + 1}:\n")
-                                    if hasattr(msg, '__dict__'):
-                                        for k, v in msg.__dict__.items():
-                                            if isinstance(v, str) and len(v) > 200:
-                                                f.write(f"  {k}: {v[:200]}...\n")
-                                            else:
-                                                f.write(f"  {k}: {v}\n")
-                                    elif isinstance(msg, dict):
-                                        for k, v in msg.items():
-                                            if isinstance(v, str) and len(v) > 200:
-                                                f.write(f"  {k}: {v[:200]}...\n")
-                                            else:
-                                                f.write(f"  {k}: {v}\n")
-                            f.flush()
-                            os.fsync(f.fileno())
-                    except Exception as e:
-                        print(f"DEBUG: Error logging messages: {e}")
-                    
-                    if msg_list:
-                        # Get ALL messages to find the assistant response
-                        # Check messages in reverse order (newest first)
-                        for idx, msg in enumerate(reversed(msg_list)):
-                            # Look for assistant/genie messages
-                            role = getattr(msg, 'role', None) or (isinstance(msg, dict) and msg.get('role'))
-                            content = getattr(msg, 'content', None) or (isinstance(msg, dict) and msg.get('content'))
-                            
-                            # Check attachments in this message
-                            msg_attachments = getattr(msg, 'attachments', None) or (isinstance(msg, dict) and msg.get('attachments'))
-                            
-                            print(f"DEBUG: Message {idx}: role={role}, content_length={len(content) if content else 0}, attachments={len(msg_attachments) if msg_attachments else 0}")
-                            
-                            # Skip if content is the question itself
-                            if content == question:
-                                print(f"DEBUG: Skipping message {idx} - matches question")
-                            # But check attachments - might have answer there
-                            if msg_attachments:
-                                for att in msg_attachments:
-                                    # Check for TextAttachment object
-                                    att_text_obj = getattr(att, 'text', None) or (isinstance(att, dict) and att.get('text'))
-                                    if att_text_obj:
-                                        # Extract content from TextAttachment if it's an object
-                                        if hasattr(att_text_obj, 'content'):
-                                            att_text = att_text_obj.content
-                                        elif isinstance(att_text_obj, str):
-                                            att_text = att_text_obj
-                                        else:
-                                            att_text = str(att_text_obj)
-                                        
-                                        if att_text and att_text != question:
-                                            print(f"DEBUG: Found text in attachment of question message: {att_text[:200]}")
-                                            if not genie_response:
-                                                genie_response = att_text
-                                continue
-                            
-                            # Check if it's an assistant response
-                            if role and role.lower() in ['assistant', 'genie', 'ai']:
-                                if content and len(content) > len(question) + 10:  # Answer should be longer
-                                    print(f"DEBUG: Found assistant response: {content[:200]}")
-                                    genie_response = content
-                                    break
-                            elif content and len(content) > len(question) + 10:
-                                # If no role but content is different and longer, might be answer
-                                # Check if it contains numbers/units OR metadata keywords
-                                import re
-                                has_numeric = bool(re.search(r'\d+', content) or 'MWh' in content or 'MW' in content or '$' in content)
-                                has_metadata = bool(
-                                    'table' in content.lower() or 
-                                    'column' in content.lower() or
-                                    'schema' in content.lower() or
-                                    'structure' in content.lower() or
-                                    'battery_telemetry' in content or
-                                    'battery_dispatch' in content or
-                                    'battery_assets' in content or
-                                    'SELECT' in content.upper() or
-                                    'FROM' in content.upper()
-                                )
-                                if has_numeric or has_metadata:
-                                    print(f"DEBUG: Found answer-like content: {content[:200]}")
-                                    genie_response = content
-                                    break
-                            
-                            # Also check attachments in this message
-                            if msg_attachments:
-                                for att in msg_attachments:
-                                    # Check for TextAttachment object
-                                    att_text_obj = getattr(att, 'text', None) or (isinstance(att, dict) and att.get('text'))
-                                    if att_text_obj:
-                                        # Extract content from TextAttachment if it's an object
-                                        if hasattr(att_text_obj, 'content'):
-                                            att_text = att_text_obj.content
-                                        elif isinstance(att_text_obj, str):
-                                            att_text = att_text_obj
-                                        else:
-                                            att_text = str(att_text_obj)
-                                        
-                                        if att_text and att_text != question and len(att_text) > len(question) + 10:
-                                            print(f"DEBUG: Found text in message {idx} attachment: {att_text[:200]}")
-                                            if not genie_response:
-                                                genie_response = att_text
-                                                break
-            except Exception as e:
-                # Log error for debugging
-                print(f"DEBUG: Error listing conversation messages: {e}", flush=True)
-                import traceback
-                traceback.print_exc()
-                # Also log to file
-                try:
-                    with open(debug_log_path, "a", encoding='utf-8') as f:
-                        f.write(f"\nERROR listing messages: {e}\n")
-                        traceback.print_exc(file=f)
-                        f.flush()
-                        os.fsync(f.fileno())
-                except:
-                    pass
-                pass
-        
-        # Then try to get message details and query results
-        # Following Genie API docs: when status is COMPLETED, response is in attachments array
-        if message_id and GENIE_ROOM_ID:
-            try:
-                # Get the message details - this should contain the answer
-                # Note: get_message requires conversation_id
                 message_details = genie.get_message(space_id=GENIE_ROOM_ID, conversation_id=conversation_id, message_id=message_id)
-                print(f"DEBUG: get_message returned: {type(message_details)}")
-                print(f"DEBUG: message_details attributes: {dir(message_details) if hasattr(message_details, '__dict__') else 'N/A'}")
-                
-                # Write full message_details to debug log AND console
-                debug_log_path = "/tmp/genie_debug.log"
-                import json
-                try:
-                    print(f"\n{'='*80}")
-                    print(f"DEBUG: Writing to {debug_log_path}")
-                    print(f"Question: {question}")
-                    print(f"Message ID: {message_id}")
-                    print(f"Conversation ID: {conversation_id}")
-                    print(f"Message Details Type: {type(message_details)}")
-                    
-                    with open(debug_log_path, "a") as f:
-                        f.write(f"\n{'='*80}\n")
-                        f.write(f"Question: {question}\n")
-                        f.write(f"Message ID: {message_id}\n")
-                        f.write(f"Conversation ID: {conversation_id}\n")
-                        f.write(f"Message Details Type: {type(message_details)}\n")
-                        
-                        # Try multiple methods to serialize
-                        if hasattr(message_details, '__dict__'):
-                            msg_dict = {k: str(v)[:1000] for k, v in message_details.__dict__.items()}
-                            msg_json = json.dumps(msg_dict, indent=2, default=str)
-                            print(f"Message Details __dict__ keys: {list(msg_dict.keys())}")
-                            f.write(f"Message Details __dict__:\n{msg_json}\n")
-                        elif hasattr(message_details, 'as_dict'):
-                            msg_dict = message_details.as_dict()
-                            msg_json = json.dumps(msg_dict, indent=2, default=str)
-                            print(f"Message Details (as_dict) keys: {list(msg_dict.keys()) if isinstance(msg_dict, dict) else 'N/A'}")
-                            f.write(f"Message Details (as_dict):\n{msg_json}\n")
-                        else:
-                            msg_str = str(message_details)[:2000]
-                            print(f"Message Details (str): {msg_str[:200]}...")
-                            f.write(f"Message Details (str):\n{msg_str}\n")
-                        
-                        f.write(f"{'='*80}\n")
-                        f.flush()  # Force write
-                    print(f"DEBUG: Successfully wrote to {debug_log_path}")
-                except Exception as e:
-                    print(f"DEBUG: Error writing to debug log: {e}")
-                    import traceback
-                    traceback.print_exc()
-                
-                # Extract attachments array (contains Genie's response when COMPLETED)
-                attachments = None
                 if hasattr(message_details, 'attachments'):
                     attachments = message_details.attachments
                 elif isinstance(message_details, dict):
                     attachments = message_details.get('attachments')
-                
-                print(f"DEBUG: Attachments: {attachments}")
-                print(f"DEBUG: Number of attachments: {len(attachments) if attachments else 0}")
-                
-                # Log attachments to debug file AND console
-                try:
-                    print(f"\nDEBUG: Logging attachments to {debug_log_path}")
-                    print(f"Number of attachments: {len(attachments) if attachments else 0}")
-                    
-                    with open(debug_log_path, "a") as f:
-                        f.write(f"\nAttachments:\n")
-                        if attachments:
-                            for idx, att in enumerate(attachments):
-                                print(f"  Processing attachment {idx + 1}...")
-                                f.write(f"  Attachment {idx + 1}:\n")
-                                if hasattr(att, '__dict__'):
-                                    att_dict = {k: str(v)[:1000] for k, v in att.__dict__.items()}
-                                    att_json = json.dumps(att_dict, indent=4, default=str)
-                                    print(f"    Type: {type(att)}")
-                                    print(f"    Keys: {list(att_dict.keys())}")
-                                    f.write(f"    Type: {type(att)}\n")
-                                    f.write(f"    __dict__:\n{att_json}\n")
-                                elif hasattr(att, 'as_dict'):
-                                    att_dict = att.as_dict()
-                                    att_json = json.dumps(att_dict, indent=4, default=str)
-                                    print(f"    Type: {type(att)}")
-                                    print(f"    Keys: {list(att_dict.keys()) if isinstance(att_dict, dict) else 'N/A'}")
-                                    f.write(f"    as_dict:\n{att_json}\n")
-                                else:
-                                    att_str = str(att)[:1000]
-                                    print(f"    Value: {att_str[:200]}...")
-                                    f.write(f"    Value: {att_str}\n")
-                        else:
-                            print("  No attachments found")
-                            f.write("  No attachments\n")
-                        f.write(f"{'='*80}\n")
-                        f.flush()  # Force write
-                    print(f"DEBUG: Successfully logged attachments to {debug_log_path}")
-                except Exception as e:
-                    print(f"DEBUG: Error logging attachments: {e}")
-                    import traceback
-                    traceback.print_exc()
-                
-                # Extract response from attachments (per Genie API docs)
-                # According to docs: attachments array contains:
-                # - text: Generated text response (Genie's natural language answer)
-                # - query: Query statement if it exists
-                # - attachment_id: Identifier to get query results
-                # Reference: https://docs.databricks.com/aws/en/genie/conversation-api#-best-practices-for-using-the-genie-api
-                if attachments:
-                    for attachment in attachments:
-                        # PRIORITY 1: Extract text response - this is Genie's natural language answer
-                        # Per docs: "The attachments array contains Genie's response. It includes the generated text response (text)"
-                        # IMPORTANT: For text-only responses, text is a TextAttachment object with .content attribute
-                        candidate_text = None
-                        if hasattr(attachment, 'text'):
-                            text_obj = attachment.text
-                            # Check if it's a TextAttachment object (has .content attribute)
-                            if hasattr(text_obj, 'content'):
-                                candidate_text = text_obj.content
-                                print(f"DEBUG: Found text.content in TextAttachment: {candidate_text[:200] if candidate_text else None}")
-                            elif isinstance(text_obj, str):
-                                candidate_text = text_obj
-                                print(f"DEBUG: Found text as string: {candidate_text[:200] if candidate_text else None}")
-                            elif text_obj is None:
-                                candidate_text = None
-                                print(f"DEBUG: attachment.text is None")
-                            else:
-                                # Try to convert to string
-                                candidate_text = str(text_obj)
-                                print(f"DEBUG: Converted text object to string: {candidate_text[:200] if candidate_text else None}")
-                        elif isinstance(attachment, dict):
-                            text_obj = attachment.get('text')
-                            if isinstance(text_obj, dict) and 'content' in text_obj:
-                                candidate_text = text_obj.get('content')
-                            elif isinstance(text_obj, str):
-                                candidate_text = text_obj
-                            else:
-                                candidate_text = None
-                        
-                        print(f"DEBUG: Final candidate_text = {candidate_text[:200] if candidate_text else 'None'}")
-                        
-                        if candidate_text and candidate_text != question and len(candidate_text) > len(question) + 10:
-                            print(f"DEBUG: ✅ Found valid text response in attachment: {candidate_text[:200]}")
-                            if not genie_response:
-                                genie_response = candidate_text
-                                print(f"DEBUG: ✅ Using attachment.text.content as genie_response")
-                        
-                        # Extract description from query attachment - this might contain Genie's explanation
-                        if hasattr(attachment, 'query'):
-                            query_obj = attachment.query
-                            if hasattr(query_obj, 'description'):
-                                description = query_obj.description
-                                print(f"DEBUG: Found query description: {description[:200] if description else None}")
-                                # Description explains what Genie is doing, but might not be the full answer
-                                # Use it if we don't have anything else
-                                if description and description != question and len(description) > len(question) + 10:
-                                    if not genie_response:
-                                        genie_response = description
-                                        print(f"DEBUG: Using query description as genie_response")
-                            elif isinstance(query_obj, dict):
-                                description = query_obj.get('description')
-                                if description and description != question and len(description) > len(question) + 10:
-                                    if not genie_response:
-                                        genie_response = description
-                                        print(f"DEBUG: Using query description from dict as genie_response")
-                        
-                        # Extract SQL query from attachment
-                        # Query is a GenieQueryAttachment object, extract the actual query string
-                        if hasattr(attachment, 'query'):
-                            query_obj = attachment.query
-                            if hasattr(query_obj, 'query'):
-                                candidate_query = query_obj.query  # Extract the SQL string
-                            elif isinstance(query_obj, dict):
-                                candidate_query = query_obj.get('query')
-                            elif isinstance(query_obj, str):
-                                candidate_query = query_obj
-                            else:
-                                candidate_query = None
-                        elif isinstance(attachment, dict):
-                            query_obj = attachment.get('query')
-                            if isinstance(query_obj, dict):
-                                candidate_query = query_obj.get('query')
-                            elif isinstance(query_obj, str):
-                                candidate_query = query_obj
-                            else:
-                                candidate_query = None
-                        else:
-                            candidate_query = None
-                        
-                        if candidate_query and not sql_query:
-                            sql_query = candidate_query
-                            print(f"DEBUG: Found query in attachment: {sql_query[:200]}")
-                        
-                        # Extract attachment_id for query results
-                        # Per docs: Use attachment_id to get query results via:
-                        # GET /api/2.0/genie/spaces/{space_id}/conversations/{conversation_id}/messages/{message_id}/query-result/{attachment_id}
-                        attachment_id = None
-                        if hasattr(attachment, 'attachment_id'):
-                            attachment_id = attachment.attachment_id
-                        elif isinstance(attachment, dict):
-                            attachment_id = attachment.get('attachment_id') or attachment.get('id')
-                        
-                        print(f"DEBUG: attachment_id = {attachment_id}")
-                        
-                        # Get query results using statement_id from query attachment
-                        # Extract statement_id from the query attachment
-                        # Alternative: Can also use attachment_id with get_message_query_result endpoint
-                        statement_id = None
-                        if hasattr(attachment, 'query') and hasattr(attachment.query, 'statement_id'):
-                            statement_id = attachment.query.statement_id
-                        elif isinstance(attachment, dict) and attachment.get('query'):
-                            query_obj = attachment.get('query')
-                            if isinstance(query_obj, dict):
-                                statement_id = query_obj.get('statement_id')
-                            elif hasattr(query_obj, 'statement_id'):
-                                statement_id = query_obj.statement_id
-                        
-                        print(f"DEBUG: statement_id = {statement_id}")
-                        
-                        # Try using attachment_id to get query results (per API docs)
-                        if attachment_id and not query_data:
-                            try:
-                                print(f"DEBUG: Trying get_message_query_result with attachment_id: {attachment_id}")
-                                # Per docs: GET /api/2.0/genie/spaces/{space_id}/conversations/{conversation_id}/messages/{message_id}/query-result/{attachment_id}
-                                query_result = genie.get_message_query_result(
-                                    space_id=GENIE_ROOM_ID,
-                                    conversation_id=conversation_id,
-                                    message_id=message_id,
-                                    attachment_id=attachment_id
-                                )
-                                print(f"DEBUG: get_message_query_result returned: {type(query_result)}")
-                                if query_result:
-                                    # Extract results from query_result
-                                    if hasattr(query_result, 'data'):
-                                        query_data = query_result.data
-                                    elif hasattr(query_result, 'result'):
-                                        query_data = query_result.result
-                                    elif isinstance(query_result, dict):
-                                        query_data = query_result.get('data') or query_result.get('result')
-                                    print(f"DEBUG: Got query_data from get_message_query_result: {len(query_data) if isinstance(query_data, list) else 'N/A'} rows")
-                            except Exception as e:
-                                print(f"DEBUG: Error using get_message_query_result: {e}")
-                                # Fall back to statement_id method
-                        
-                        # Fallback: Use statement_id directly with Statement Execution API
-                        if statement_id and not query_data:
-                            try:
-                                print(f"DEBUG: Fetching query results using statement_id: {statement_id}")
-                                # Use statement execution API to get results
-                                from databricks.sdk.service.sql import StatementState
-                                result = w.statement_execution.get_statement(statement_id)
-                                
-                                if result and result.status.state == StatementState.SUCCEEDED and result.result:
-                                    print(f"DEBUG: Got statement result, extracting data...")
-                                    if hasattr(result.result, 'data_array') and result.result.data_array:
-                                        query_data = result.result.data_array
-                                        print(f"DEBUG: Found query_data from statement: {len(query_data)} rows")
-                                        # Format query data as a readable answer if we don't have genie_response
-                                        if query_data and not genie_response:
-                                            # Get column names if available
-                                            columns = []
-                                            if hasattr(result.result, 'manifest') and result.result.manifest:
-                                                if hasattr(result.result.manifest, 'schema') and result.result.manifest.schema:
-                                                    if hasattr(result.result.manifest.schema, 'columns'):
-                                                        columns = [col.name for col in result.result.manifest.schema.columns]
-                                            
-                                            # Format as table
-                                            formatted_rows = []
-                                            if columns:
-                                                formatted_rows.append(" | ".join(columns))
-                                                formatted_rows.append(" | ".join(["---"] * len(columns)))
-                                            for row in query_data:
-                                                formatted_rows.append(" | ".join(str(val) for val in row))
-                                            genie_response = "\n".join(formatted_rows)
-                                            print(f"DEBUG: Created genie_response from query_data: {genie_response[:200]}")
-                                    elif hasattr(result.result, 'rows') and result.result.rows:
-                                        query_data = result.result.rows
-                                        print(f"DEBUG: Found query_data from statement: {len(query_data)} rows")
-                                        # Format query data as a readable answer if we don't have genie_response
-                                        if query_data and not genie_response:
-                                            formatted_rows = []
-                                            for row in query_data:
-                                                formatted_rows.append(" | ".join(str(val) for val in row))
-                                            genie_response = "\n".join(formatted_rows)
-                                            print(f"DEBUG: Created genie_response from query_data: {genie_response[:200]}")
-                            except Exception as e:
-                                print(f"DEBUG: Error getting query result from statement: {e}")
-                                import traceback
-                                traceback.print_exc()
-                
-                # Extract answer/content from message details (if not already found)
-                if not genie_response:
-                    if hasattr(message_details, 'content'):
-                        candidate = message_details.content
-                        print(f"DEBUG: Found content in message_details: {candidate[:200] if candidate else None}")
-                        if candidate and candidate != question:
-                            genie_response = candidate
-                    elif hasattr(message_details, 'answer'):
-                        candidate = message_details.answer
-                        print(f"DEBUG: Found answer in message_details: {candidate[:200] if candidate else None}")
-                        if candidate and candidate != question:
-                            genie_response = candidate
-                    elif hasattr(message_details, 'text'):
-                        candidate = message_details.text
-                        print(f"DEBUG: Found text in message_details: {candidate[:200] if candidate else None}")
-                        if candidate and candidate != question:
-                            genie_response = candidate
-                    elif hasattr(message_details, 'message'):
-                        # Sometimes answer is nested in message object
-                        msg_obj = message_details.message
-                        print(f"DEBUG: Found nested message object: {type(msg_obj)}")
-                        if hasattr(msg_obj, 'content'):
-                            candidate = msg_obj.content
-                            print(f"DEBUG: Found content in nested message: {candidate[:200] if candidate else None}")
-                            if candidate and candidate != question:
-                                genie_response = candidate
-                        elif hasattr(msg_obj, 'text'):
-                            candidate = msg_obj.text
-                            print(f"DEBUG: Found text in nested message: {candidate[:200] if candidate else None}")
-                            if candidate and candidate != question:
-                                genie_response = candidate
-                    elif isinstance(message_details, dict):
-                        candidate = (message_details.get('content') or 
-                                    message_details.get('answer') or 
-                                    message_details.get('text') or
-                                    message_details.get('message', {}).get('content'))
-                        print(f"DEBUG: Found in dict: {candidate[:200] if candidate else None}")
-                        if candidate and candidate != question:
-                            genie_response = candidate
-                
-                # Fallback: Try old method if attachments didn't work
-                if not genie_response or not sql_query:
-                    # Try to get query result which contains SQL and data (legacy method)
-                    try:
-                        query_result = genie.get_message_query_result(space_id=GENIE_ROOM_ID, message_id=message_id)
-                        print(f"DEBUG: get_message_query_result (legacy) returned: {type(query_result)}")
-                        if query_result:
-                            print(f"DEBUG: query_result attributes: {dir(query_result) if hasattr(query_result, '__dict__') else 'N/A'}")
-                            
-                            # Extract SQL query - try multiple attributes
-                            if not sql_query:
-                                if hasattr(query_result, 'sql_query'):
-                                    sql_query = query_result.sql_query
-                                    print(f"DEBUG: Found sql_query: {sql_query[:200] if sql_query else None}")
-                                elif hasattr(query_result, 'query'):
-                                    sql_query = query_result.query
-                                    print(f"DEBUG: Found query: {sql_query[:200] if sql_query else None}")
-                                elif isinstance(query_result, dict):
-                                    sql_query = (query_result.get('sql_query') or 
-                                                query_result.get('query') or 
-                                                query_result.get('sql'))
-                                    print(f"DEBUG: Found in dict: {sql_query[:200] if sql_query else None}")
-                            
-                            # Extract query data/results - try multiple structures
-                            if not query_data:
-                                if hasattr(query_result, 'data'):
-                                    query_data = query_result.data
-                                elif hasattr(query_result, 'result'):
-                                    query_data = query_result.result
-                                elif hasattr(query_result, 'rows'):
-                                    query_data = query_result.rows
-                                elif isinstance(query_result, dict):
-                                    query_data = (query_result.get('data') or 
-                                                 query_result.get('result') or 
-                                                 query_result.get('rows'))
-                                
-                                # If query_data is a complex object, try to extract rows/values
-                                if query_data and hasattr(query_data, 'rows'):
-                                    query_data = query_data.rows
-                                elif query_data and hasattr(query_data, 'data'):
-                                    query_data = query_data.data
-                                elif query_data and isinstance(query_data, dict) and 'rows' in query_data:
-                                    query_data = query_data['rows']
-                                
-                                print(f"DEBUG: Found query_data (legacy): {str(query_data)[:200] if query_data else None}")
-                                
-                    except Exception as e:
-                        # Query result extraction failed, try alternative method
-                        print(f"DEBUG: Error getting query result (legacy): {e}")
-                        pass
-                
-                # Try alternative: wait for message to complete, then get results
-                # This should have been done earlier, but try again if we still don't have answer
-                if not genie_response:
-                    try:
-                        # Use wait_get_message_genie_completed to ensure message is fully processed
-                        completed_message = genie.wait_get_message_genie_completed(message_id=message_id, timeout=30)
-                        if completed_message:
-                            # Extract from completed message - this should have the full answer
-                            if hasattr(completed_message, 'content'):
-                                candidate = completed_message.content
-                            elif hasattr(completed_message, 'answer'):
-                                candidate = completed_message.answer
-                            elif hasattr(completed_message, 'text'):
-                                candidate = completed_message.text
-                            # Check nested message structure
-                            elif hasattr(completed_message, 'message'):
-                                msg_obj = completed_message.message
-                                if hasattr(msg_obj, 'content'):
-                                    candidate = msg_obj.content
-                                elif hasattr(msg_obj, 'text'):
-                                    candidate = msg_obj.text
-                                else:
-                                    candidate = None
-                            else:
-                                candidate = None
-                            
-                            # Only use if it's different from question and contains actual answer
-                            if candidate and candidate != question and len(candidate) > len(question) + 10:
-                                import re
-                                if re.search(r'\d+', candidate) or 'MWh' in candidate or 'MW' in candidate or '$' in candidate:
-                                    genie_response = candidate
-                    except Exception as e:
-                        # If wait fails, that's okay - we'll try other methods
-                        pass
-                
-                # Try alternative method: execute_message_query
-                if not query_data:
-                    try:
-                        exec_result = genie.execute_message_query(message_id=message_id)
-                        if exec_result:
-                            if hasattr(exec_result, 'data'):
-                                query_data = exec_result.data
-                            elif hasattr(exec_result, 'result'):
-                                query_data = exec_result.result
-                    except Exception:
-                        pass
-                    
+                if DEBUG_MODE:
+                    print(f"DEBUG: Got attachments from get_message fallback: {len(attachments) if attachments else 0}")
             except Exception as e:
-                # If get_message fails, try alternative approaches
+                if DEBUG_MODE:
+                    print(f"DEBUG: Error getting message details: {e}")
+        
+        # Extract response from attachments (per Genie API docs)
+        # According to docs: attachments array contains:
+        # - text: Generated text response (Genie's natural language answer)
+        # - query: Query statement if it exists
+        # - attachment_id: Identifier to get query results
+        # Reference: https://docs.databricks.com/aws/en/genie/conversation-api#-best-practices-for-using-the-genie-api
+        if attachments:
+            for attachment in attachments:
+                # PRIORITY 1: Extract text response - this is Genie's natural language answer
+                # Per docs: "The attachments array contains Genie's response. It includes the generated text response (text)"
+                # IMPORTANT: For text-only responses, text is a TextAttachment object with .content attribute
+                candidate_text = None
+                if hasattr(attachment, 'text'):
+                    text_obj = attachment.text
+                    # Check if it's a TextAttachment object (has .content attribute)
+                    if hasattr(text_obj, 'content'):
+                        candidate_text = text_obj.content
+                    elif isinstance(text_obj, str):
+                        candidate_text = text_obj
+                    elif text_obj is None:
+                        candidate_text = None
+                    else:
+                        # Try to convert to string
+                        candidate_text = str(text_obj)
+                elif isinstance(attachment, dict):
+                    text_obj = attachment.get('text')
+                    if isinstance(text_obj, dict) and 'content' in text_obj:
+                        candidate_text = text_obj.get('content')
+                    elif isinstance(text_obj, str):
+                        candidate_text = text_obj
+                    else:
+                        candidate_text = None
+                
+                if candidate_text and candidate_text != question and len(candidate_text) > len(question) + 10:
+                    if not genie_response:
+                        genie_response = candidate_text
+                
+                # Extract SQL query from attachment
+                if hasattr(attachment, 'query'):
+                    query_obj = attachment.query
+                    if hasattr(query_obj, 'query'):
+                        candidate_query = query_obj.query
+                    elif isinstance(query_obj, dict):
+                        candidate_query = query_obj.get('query')
+                    elif isinstance(query_obj, str):
+                        candidate_query = query_obj
+                    else:
+                        candidate_query = None
+                elif isinstance(attachment, dict):
+                    query_obj = attachment.get('query')
+                    if isinstance(query_obj, dict):
+                        candidate_query = query_obj.get('query')
+                    elif isinstance(query_obj, str):
+                        candidate_query = query_obj
+                    else:
+                        candidate_query = None
+                else:
+                    candidate_query = None
+                
+                if candidate_query and not sql_query:
+                    sql_query = candidate_query
+                
+                # Extract description from query attachment - use as fallback if no text response
+                if not genie_response and hasattr(attachment, 'query'):
+                    query_obj = attachment.query
+                    if hasattr(query_obj, 'description'):
+                        description = query_obj.description
+                        if description and description != question and len(description) > len(question) + 10:
+                            genie_response = description
+                    elif isinstance(query_obj, dict):
+                        description = query_obj.get('description')
+                        if description and description != question and len(description) > len(question) + 10:
+                            genie_response = description
+                
+                # Extract statement_id for query results
+                if hasattr(attachment, 'query') and hasattr(attachment.query, 'statement_id'):
+                    statement_id = attachment.query.statement_id
+                elif isinstance(attachment, dict) and attachment.get('query'):
+                    query_obj = attachment.get('query')
+                    if isinstance(query_obj, dict):
+                        statement_id = query_obj.get('statement_id')
+                    elif hasattr(query_obj, 'statement_id'):
+                        statement_id = query_obj.statement_id
+        
+        # Get query results using statement_id (after collecting from all attachments)
+        if statement_id and not query_data:
+            try:
+                if DEBUG_MODE:
+                    print(f"DEBUG: Fetching query results using statement_id: {statement_id}")
+                from databricks.sdk.service.sql import StatementState
+                result = w.statement_execution.get_statement(statement_id)
+                result_obj = result
+                
+                if result and result.status.state == StatementState.SUCCEEDED and result.result:
+                    if hasattr(result.result, 'data_array') and result.result.data_array:
+                        query_data = result.result.data_array
+                        
+                        # Get column names for chart creation
+                        columns = []
+                        if hasattr(result.result, 'manifest') and result.result.manifest:
+                            if hasattr(result.result.manifest, 'schema') and result.result.manifest.schema:
+                                if hasattr(result.result.manifest.schema, 'columns'):
+                                    columns = [col.name for col in result.result.manifest.schema.columns]
+                        
+                        # Generate chart ONLY if visualization is explicitly requested
+                        if is_visualization_request and query_data:
+                            chart_data = create_plotly_chart(query_data, columns, question)
+                        
+                        # Format query data as answer if we don't have genie_response
+                        if query_data and not genie_response:
+                            formatted_rows = []
+                            if columns:
+                                formatted_rows.append(" | ".join(columns))
+                                formatted_rows.append(" | ".join(["---"] * len(columns)))
+                            for row in query_data:
+                                formatted_rows.append(" | ".join(str(val) for val in row))
+                            genie_response = "\n".join(formatted_rows)
+                    elif hasattr(result.result, 'rows') and result.result.rows:
+                        query_data = result.result.rows
+                        
+                        # Get column names
+                        columns = []
+                        if hasattr(result.result, 'manifest') and result.result.manifest:
+                            if hasattr(result.result.manifest, 'schema') and result.result.manifest.schema:
+                                if hasattr(result.result.manifest.schema, 'columns'):
+                                    columns = [col.name for col in result.result.manifest.schema.columns]
+                        
+                        # Generate chart ONLY if visualization is explicitly requested
+                        if is_visualization_request and query_data:
+                            chart_data = create_plotly_chart(query_data, columns, question)
+                        
+                        # Format query data as answer if we don't have genie_response
+                        if query_data and not genie_response:
+                            formatted_rows = []
+                            if columns:
+                                formatted_rows.append(" | ".join(columns))
+                                formatted_rows.append(" | ".join(["---"] * len(columns)))
+                            for row in query_data:
+                                formatted_rows.append(" | ".join(str(val) for val in row))
+                            genie_response = "\n".join(formatted_rows)
+            except Exception as e:
+                if DEBUG_MODE:
+                    print(f"DEBUG: Error getting query result: {e}")
                 pass
         
         # Fallback: Extract from message object directly
@@ -1043,12 +1079,103 @@ Question asked: {question}"""
                 genie_response = message.text
             elif isinstance(message, dict):
                 genie_response = message.get('content') or message.get('answer') or message.get('text')
-            else:
-                genie_response = str(message)
+        
+        # Fallback: Try old method if attachments didn't work
+        if not genie_response or not sql_query:
+            # Try to get query result which contains SQL and data (legacy method)
+            try:
+                query_result = genie.get_message_query_result(space_id=GENIE_ROOM_ID, message_id=message_id)
+                if DEBUG_MODE:
+                    print(f"DEBUG: get_message_query_result (legacy) returned: {type(query_result)}")
+                if query_result:
+                    # Extract SQL query - try multiple attributes
+                    if not sql_query:
+                        if hasattr(query_result, 'sql_query'):
+                            sql_query = query_result.sql_query
+                        elif hasattr(query_result, 'query'):
+                            sql_query = query_result.query
+                        elif isinstance(query_result, dict):
+                            sql_query = (query_result.get('sql_query') or 
+                                        query_result.get('query') or 
+                                        query_result.get('sql'))
+                    
+                    # Extract query data/results - try multiple structures
+                    if not query_data:
+                        if hasattr(query_result, 'data'):
+                            query_data = query_result.data
+                        elif hasattr(query_result, 'result'):
+                            query_data = query_result.result
+                        elif hasattr(query_result, 'rows'):
+                            query_data = query_result.rows
+                        elif isinstance(query_result, dict):
+                            query_data = (query_result.get('data') or 
+                                         query_result.get('result') or 
+                                         query_result.get('rows'))
+                        
+                        # If query_data is a complex object, try to extract rows/values
+                        if query_data and hasattr(query_data, 'rows'):
+                            query_data = query_data.rows
+                        elif query_data and hasattr(query_data, 'data'):
+                            query_data = query_data.data
+                        elif query_data and isinstance(query_data, dict) and 'rows' in query_data:
+                            query_data = query_data['rows']
+            except Exception as e:
+                if DEBUG_MODE:
+                    print(f"DEBUG: Error getting query result (legacy): {e}")
+                pass
+        
+        # Only use this as a last resort if we still don't have an answer
+        if not genie_response and message_id:
+            try:
+                # Use shorter timeout - we've already waited
+                completed_message = genie.wait_get_message_genie_completed(message_id=message_id, timeout=10)
+                if completed_message:
+                    # Extract from completed message - this should have the full answer
+                    if hasattr(completed_message, 'content'):
+                        candidate = completed_message.content
+                    elif hasattr(completed_message, 'answer'):
+                        candidate = completed_message.answer
+                    elif hasattr(completed_message, 'text'):
+                        candidate = completed_message.text
+                    # Check nested message structure
+                    elif hasattr(completed_message, 'message'):
+                        msg_obj = completed_message.message
+                        if hasattr(msg_obj, 'content'):
+                            candidate = msg_obj.content
+                        elif hasattr(msg_obj, 'text'):
+                            candidate = msg_obj.text
+                        else:
+                            candidate = None
+                    else:
+                        candidate = None
+                    
+                    # Only use if it's different from question and contains actual answer
+                    if candidate and candidate != question and len(candidate) > len(question) + 10:
+                        import re
+                        if re.search(r'\d+', candidate) or 'MWh' in candidate or 'MW' in candidate or '$' in candidate:
+                            genie_response = candidate
+            except Exception as e:
+                # If wait fails, that's okay - we'll try other methods
+                pass
+        
+        # Try alternative method: execute_message_query
+        if not query_data:
+            try:
+                exec_result = genie.execute_message_query(message_id=message_id)
+                if exec_result:
+                    if hasattr(exec_result, 'data'):
+                        query_data = exec_result.data
+                    elif hasattr(exec_result, 'result'):
+                        query_data = exec_result.result
+            except Exception:
+                pass
         
         # Format the response with SQL and results
         # Prioritize Genie's answer - it contains the actual formatted answer with numbers
         response_parts = []
+        
+        # chart_data is already initialized at function start
+        chart_type = None
         
         # DEBUG: Include raw Genie response for debugging
         debug_info = []
@@ -1064,6 +1191,16 @@ Question asked: {question}"""
         has_valid_answer = False
         
         # Include Genie's answer FIRST - this is what the agent should use
+        # Check if this is a metadata query (schema, structure, table info) BEFORE processing response
+        is_metadata_query = bool(
+            'schema' in question.lower() or
+            'structure' in question.lower() or
+            ('table' in question.lower() and ('column' in question.lower() or 'show' in question.lower() or 'describe' in question.lower())) or
+            'what tables' in question.lower() or
+            'show tables' in question.lower() or
+            'describe' in question.lower()
+        )
+        
         if genie_response and genie_response != question:
             # Check if genie_response contains actual answer (not just question)
             # For data queries: look for numbers/units
@@ -1076,6 +1213,7 @@ Question asked: {question}"""
                                    '$' in genie_response or '%' in genie_response)
             
             # Check for metadata/descriptive content (table names, column names, etc.)
+            # This helps identify when Genie returned metadata even if response is short
             has_metadata_content = bool(
                 'table' in genie_response.lower() or 
                 'column' in genie_response.lower() or
@@ -1086,13 +1224,21 @@ Question asked: {question}"""
                 'battery_dispatch' in genie_response or
                 'battery_assets' in genie_response or
                 'SELECT' in genie_response.upper() or
-                'FROM' in genie_response.upper()
+                'FROM' in genie_response.upper() or
+                'DESCRIBE' in genie_response.upper() or
+                'SHOW' in genie_response.upper()
             )
             
             # Accept if it's longer than question AND (has numeric data OR has metadata content)
+            # OR if it's a metadata query and has SQL or query_data
             if response_length_check and (has_numeric_data or has_metadata_content):
                 # This is Genie's actual answer - put it first and make it prominent
-                response_parts.append(f"{genie_response}")
+                # Format the text to ensure proper spacing
+                formatted_response = format_response_text(genie_response)
+                response_parts.append(f"{formatted_response}")
+                has_valid_answer = True
+            elif is_metadata_query and (sql_query or query_data):
+                # For metadata queries, SQL or query_data counts as valid answer even if genie_response is short
                 has_valid_answer = True
         
         # Check query_data for valid results
@@ -1109,10 +1255,52 @@ Question asked: {question}"""
                 pass
         
         # If we don't have a valid answer, check if Genie returned the question (meaning it didn't process)
-        if not has_valid_answer and not sql_query:
-            # Check if Genie just echoed the question back (common when it can't process)
-            if genie_response == question or (genie_response and len(genie_response) <= len(question) + 5):
-                error_msg = f"""Genie Error: Genie did not process the question and returned it unchanged.
+        # For metadata queries, also check if we have SQL or query_data (those count as valid answers)
+        if not has_valid_answer:
+            # For metadata queries, check if we have SQL or query_data even if genie_response is missing/short
+            if is_metadata_query and (sql_query or query_data):
+                print(f"DEBUG: Metadata query - accepting SQL or query_data as valid response")
+                # Use SQL or query_data to construct response
+                if not genie_response and sql_query:
+                    genie_response = f"The following SQL query shows the schema/structure:\n\n{sql_query}"
+                    response_parts.append(genie_response)
+                    has_valid_answer = True
+                elif not genie_response and query_data:
+                    genie_response = "Schema information retrieved from database."
+                    response_parts.append(genie_response)
+                    has_valid_answer = True
+            
+            # If still no valid answer, check if Genie returned the question unchanged
+            if not has_valid_answer and not sql_query:
+                # Check if Genie just echoed the question back (common when it can't process)
+                if genie_response == question or (genie_response and len(genie_response) <= len(question) + 5):
+                    if is_metadata_query:
+                        # Metadata query failed - provide helpful error
+                        error_msg = f"""Genie Error: Genie did not process the metadata question and returned it unchanged.
+
+Question: {question}
+Genie Response: {genie_response if genie_response else 'None'}
+Message ID: {message_id if message_id else 'None'}
+Conversation ID: {conversation_id if conversation_id else 'None'}
+
+For metadata questions (table structure, schema info), Genie may need:
+1. More specific instructions in the Genie space configuration
+2. SQL examples for DESCRIBE or SHOW commands
+3. Or you can ask specific data questions instead (e.g., "Show me columns in battery_telemetry")
+
+DEBUG INFO:
+{chr(10).join(debug_info)}
+
+Please check:
+1. Genie space exists and is accessible
+2. Question was properly sent to Genie
+3. Genie has completed processing (check Genie UI)
+4. GENIE_ROOM_ID is set correctly: {GENIE_ROOM_ID if GENIE_ROOM_ID else 'NOT SET'}
+
+The agent cannot proceed without Genie's answer."""
+                    else:
+                        # Regular query failed
+                        error_msg = f"""Genie Error: Genie did not process the question and returned it unchanged.
 
 Question: {question}
 Genie Response: {genie_response if genie_response else 'None'}
@@ -1139,8 +1327,9 @@ Please check:
 4. GENIE_ROOM_ID is set correctly: {GENIE_ROOM_ID if GENIE_ROOM_ID else 'NOT SET'}
 
 The agent cannot proceed without Genie's answer."""
-            else:
-                error_msg = f"""Genie Error: Could not extract answer from Genie response.
+                    raise Exception(error_msg)
+                else:
+                    error_msg = f"""Genie Error: Could not extract answer from Genie response.
 
 Question: {question}
 Genie Response: {genie_response if genie_response else 'None'}
@@ -1157,7 +1346,7 @@ Please check:
 4. GENIE_ROOM_ID is set correctly: {GENIE_ROOM_ID if GENIE_ROOM_ID else 'NOT SET'}
 
 The agent cannot proceed without Genie's answer."""
-            raise Exception(error_msg)
+                    raise Exception(error_msg)
         
         # If we have SQL but no answer, that's also a problem
         if sql_query and not has_valid_answer:
@@ -1196,6 +1385,7 @@ The agent cannot proceed without Genie's answer."""
             response_parts.append(f"\n\n🤖 **SQL Generated by Genie:**\n```sql\n{sql_query}\n```")
         
         # Add query results if available
+        # IMPORTANT: Close code blocks properly before adding chart markers
         if query_data:
             try:
                 # Handle list of rows
@@ -1205,17 +1395,17 @@ The agent cannot proceed without Genie's answer."""
                         if isinstance(query_data[0], (list, tuple)):
                             # Array of arrays - format as table
                             formatted_data = "\n".join([str(row) for row in query_data])
-                            response_parts.append(f"\n**Raw Query Results:**\n```\n{formatted_data}\n```")
+                            response_parts.append(f"\n**Raw Query Results:**\n```\n{formatted_data}\n```\n")  # Added \n at end
                         elif isinstance(query_data[0], dict):
                             # Array of dicts - format nicely
                             formatted_rows = []
                             for row in query_data:
                                 formatted_rows.append(str(row))
-                            response_parts.append(f"\n**Raw Query Results:**\n```\n" + "\n".join(formatted_rows) + "\n```")
+                            response_parts.append(f"\n**Raw Query Results:**\n```\n" + "\n".join(formatted_rows) + "\n```\n")  # Added \n at end
                         else:
-                            response_parts.append(f"\n**Raw Query Results:**\n```\n{str(query_data)}\n```")
+                            response_parts.append(f"\n**Raw Query Results:**\n```\n{str(query_data)}\n```\n")  # Added \n at end
                     else:
-                        response_parts.append("\n**Query Results:** NULL or empty result")
+                        response_parts.append("\n**Query Results:** NULL or empty result\n")
                 # Handle dict format
                 elif isinstance(query_data, dict):
                     # Check if it's a result set with rows
@@ -1223,26 +1413,83 @@ The agent cannot proceed without Genie's answer."""
                         rows = query_data['rows']
                         if rows:
                             formatted_rows = [str(row) for row in rows]
-                            response_parts.append(f"\n**Raw Query Results:**\n```\n" + "\n".join(formatted_rows) + "\n```")
+                            response_parts.append(f"\n**Raw Query Results:**\n```\n" + "\n".join(formatted_rows) + "\n```\n")  # Added \n at end
                         else:
-                            response_parts.append("\n**Query Results:** NULL or empty result")
+                            response_parts.append("\n**Query Results:** NULL or empty result\n")
                     elif 'data' in query_data:
-                        response_parts.append(f"\n**Raw Query Results:**\n```json\n{str(query_data['data'])}\n```")
+                        response_parts.append(f"\n**Raw Query Results:**\n```json\n{str(query_data['data'])}\n```\n")  # Added \n at end
                     else:
-                        response_parts.append(f"\n**Raw Query Results:**\n```json\n{str(query_data)}\n```")
+                        response_parts.append(f"\n**Raw Query Results:**\n```json\n{str(query_data)}\n```\n")  # Added \n at end
                 # Handle other formats
                 else:
                     data_str = str(query_data)
                     if data_str and data_str != 'None':
-                        response_parts.append(f"\n**Raw Query Results:**\n```\n{data_str}\n```")
+                        response_parts.append(f"\n**Raw Query Results:**\n```\n{data_str}\n```\n")  # Added \n at end
                     else:
-                        response_parts.append("\n**Query Results:** NULL or empty result")
+                        response_parts.append("\n**Query Results:** NULL or empty result\n")
             except Exception as e:
                 # If formatting fails, just include raw data
-                response_parts.append(f"\n**Raw Query Results:**\n{str(query_data)}")
+                response_parts.append(f"\n**Raw Query Results:**\n{str(query_data)}\n")  # Added \n at end
+        
+        # Only create charts if explicitly requested - no automatic creation
+        # Use stored result_obj if available for column names
+        if is_visualization_request and query_data and not chart_data:
+            try:
+                print(f"DEBUG: Chart creation requested - is_visualization_request={is_visualization_request}, query_data={query_data is not None}, chart_data={chart_data}")
+                # Try to get column names from stored result_obj
+                columns = None
+                if result_obj and hasattr(result_obj, 'result') and hasattr(result_obj.result, 'manifest'):
+                    if hasattr(result_obj.result.manifest, 'schema') and hasattr(result_obj.result.manifest.schema, 'columns'):
+                        columns = [col.name for col in result_obj.result.manifest.schema.columns]
+                        print(f"DEBUG: Extracted columns from result_obj: {columns}")
+                
+                print(f"DEBUG: Attempting chart creation with columns: {columns}, query_data length: {len(query_data) if isinstance(query_data, list) else 'N/A'}")
+                chart_data = create_plotly_chart(query_data, columns, question)
+                if chart_data:
+                    print(f"DEBUG: ✓ Chart creation succeeded: {chart_data['type']}")
+                else:
+                    print(f"DEBUG: ✗ Chart creation returned None - chart creation failed")
+            except Exception as e:
+                print(f"DEBUG: Error generating chart: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        # Embed chart JSON in response if available
+        # IMPORTANT: Add chart AFTER all query results to avoid it being included in "Raw Query Results"
+        if chart_data:
+            import json
+            print(f"DEBUG: ✓ Embedding chart JSON in response (type: {chart_data['type']}, title: {chart_data.get('title', 'N/A')})")
+            # chart_data['json'] is already a JSON string, so we need to serialize the whole dict properly
+            # json.dumps will automatically escape the inner JSON string
+            chart_marker = f"\n\n[PLOTLY_CHART_START]\n{json.dumps(chart_data)}\n[PLOTLY_CHART_END]\n"
+            response_parts.append(chart_marker)
+            print(f"DEBUG: Chart marker length: {len(chart_marker)}, contains START: {'PLOTLY_CHART_START' in chart_marker}")
+        else:
+            print(f"DEBUG: ✗ No chart_data to embed. is_visualization_request={is_visualization_request}, query_data={query_data is not None}")
+            # Charts are only created when explicitly requested - no automatic creation
         
         response = "\n".join(response_parts)
         response += "\n\n---\n*Note: This answer and SQL were dynamically generated by Databricks Genie.*"
+        
+        # Final formatting pass to ensure proper spacing around numbers and currency
+        # BUT preserve chart markers - they must not be modified
+        # Split response by chart markers, format each part separately, then rejoin
+        import re as re_module
+        chart_pattern = r'(\[PLOTLY_CHART_START\].*?\[PLOTLY_CHART_END\])'
+        parts = re_module.split(chart_pattern, response, flags=re_module.DOTALL)
+        
+        formatted_parts = []
+        for part in parts:
+            if part.startswith('[PLOTLY_CHART_START]'):
+                # Don't format chart markers
+                formatted_parts.append(part)
+            else:
+                # Format regular text
+                formatted_parts.append(format_response_text(part))
+        
+        response = ''.join(formatted_parts)
+        
+        print(f"DEBUG: Final response length: {len(response)}, contains chart markers: {'PLOTLY_CHART_START' in response}")
         
         return response
         
@@ -1295,13 +1542,29 @@ CRITICAL RULES:
 - For technical documentation questions, use search_battery_docs
 - For any data queries (SoC, revenue, throughput, comparisons, etc.), use query_genie ONLY
 
+VISUALIZATION CAPABILITIES:
+- **You have built-in visualization capabilities** - charts are created ONLY when explicitly requested
+- **Create visualizations ONLY when users explicitly ask** for:
+  * "Plot..." or "Chart..." or "Graph..." or "Visualize..."
+  * "Show me a chart of..." or "Display a graph of..."
+- **DO NOT create charts automatically** - only when explicitly requested
+- **DO NOT provide code examples** (matplotlib, plotly, Excel instructions) - charts are created automatically when requested
+- **DO NOT say** "I can't create charts" - charts can be created when users explicitly ask
+- When users explicitly request a visualization, create it automatically - no need to mention code or tools
+- **CRITICAL: When query_genie returns chart markers [PLOTLY_CHART_START]... [PLOTLY_CHART_END], you MUST include them EXACTLY as-is in your final response**
+- **DO NOT summarize, rewrite, or remove chart markers** - they are required for chart rendering
+- **The chart markers are embedded in the tool's response - pass them through unchanged**
+
 COMMUNICATION STYLE:
 - Maintain a professional, expert tone appropriate for Energy Australia operations
 - Avoid casual language, exclamations, or phrases like "Perfect!", "Great!", "Here's what happens:"
 - Present information directly and factually, as an Energy Australia technical expert would
 - Use clear, concise language focused on operational accuracy
 - When referencing documentation, state findings directly without celebratory language
-- Example: Instead of "Perfect! I found the answer...", say "According to the technical documentation..." or "The documentation indicates..." """
+- Example: Instead of "Perfect! I found the answer...", say "According to the technical documentation..." or "The documentation indicates..."
+- When presenting data, present it naturally - charts are only created when users explicitly request them
+- **ALWAYS use proper spacing** around numbers, currency symbols, and words (e.g., "-$700 to gains exceeding $650", not "-700togainsexceeding650")
+- Format numbers and currency clearly with spaces: "$100 revenue", "-700 to", "650 exceeding" """
 
 # Initialize LLM
 # Only print when running directly (not when imported)

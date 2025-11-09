@@ -2,30 +2,27 @@ question,query_type,expected,response,response_length,success_indicators,status,
 What is the current SoC for RESS2?,structured,Should query battery_telemetry and provide current SoC in MWh and percentage,"The current SoC for **RESS2** is:
 
 - **82.7%** (62.0 MWh)
-- Last reading: 2025-01-12 00:00:00 UTC
-- Reading age: 3 minutes
+- Last reading: 3 minutes ago (2025-01-12 00:00:00 UTC)
 
-The telemetry is fresh (under 10 minutes), so there should be no availability restrictions for this battery.",232,"Contains data, Contains battery ID",SUCCESS,
+The telemetry is fresh (less than 10 minutes old), so there should be no availability restrictions based on data staleness.",238,"Contains data, Contains battery ID",SUCCESS,
 How is throughput calculated for Darlington Point batteries?,unstructured,Should search documentation and explain the 7.5 hour window calculation formula,"Based on the documentation, here's how throughput is calculated for the Darlington Point batteries (RESS2 and DPNTBESS):
 
 ## Throughput Calculation Formula
 
-**Over the previous 7.5 hours:**
-
+**Raw Throughput (over previous 7.5 hours):**
 ```
 Throughput = (max(cumenergyexported) - min(cumenergyexported) + 
               max(cumenergyimported) - min(cumenergyimported)) * 100
 ```
 
-Where:
-- `cumenergyexported` = cumulative energy exported from the battery
-- `cumenergyimported` = cumulative energy imported to the battery
+This measures the total energy movement through the battery by:
+- Taking the range of cumulative energy exported (max - min)
+- Adding the range of cumulative energy imported (max - min)
+- Multiplying by 100 (likely a unit conversion)
 
-The calculation takes the range (max - min) of both exported and imported energy over the 7.5-hour window and multiplies by 100.
+## Adjusted Throughput
 
-## Adjusted Throughput for Bidding
-
-When determining maximum available throughput for bidding purposes, the system also calculates an **adjusted throughput** that accounts for potential usage between the last reading and the current time:
+For bidding purposes, the system also calculates an **adjusted throughput** that accounts for potential energy movement since the last reading:
 
 ```
 adjusted_throughput_mwh = throughput_mwh + 
@@ -34,12 +31,12 @@ adjusted_throughput_mwh = throughput_mwh +
 ```
 
 Where:
-- `throughput_mwh` = actual measured throughput
+- `throughput_mwh` = the raw throughput calculated above
 - `mins_since_reading` = minutes since the last telemetry reading
-- `nameplate_capacity_mw` = battery's rated capacity
+- `nameplate_capacity_mw` = the battery's maximum power capacity
 - `buffer_mwh` = 5 MWh safety buffer
 
-This adjusted calculation ensures the bidding system accounts for potential throughput that may have occurred since the last data reading, plus a conservative buffer.",1393,"Detailed explanation, Relevant content",SUCCESS,
+This adjusted calculation ensures conservative bidding by assuming the battery could have been operating at full capacity since the last reading, plus adding a 5 MWh buffer for safety.",1336,"Detailed explanation, Relevant content",SUCCESS,
 What's the revenue for GANNBG1 in the last 24 hours?,structured,Should query battery_dispatch and calculate total revenue with breakdown,"Based on the data from Genie, **GANNBG1 has generated -$2,522.20 in revenue over the last 24 hours**.
 
 The negative revenue indicates that GANNBG1 has been charging (consuming energy) more than discharging (generating energy) during this period, resulting in a net cost rather than profit. This is normal for battery operations depending on market conditions and trading strategy.",380,"Contains data, Contains battery ID",SUCCESS,
@@ -56,65 +53,63 @@ The PI system serves as a **centralized OPC data repository** that bridges the o
 - Follows EA's standard pattern for energy sites that EA owns or co-owns
 
 ### 2. **Protocol Architecture**
-The architecture has evolved between sites:
 
-**Riverina (RESS2/DPNTBESS):**
-- Uses **PI UA Connector** (OPC UA protocol)
-- Less stable, newer integration architecture
-
-**Wooreen (GANNBG1/GANNBL1) - Improved Design:**
-- Uses **PI DA Interface** (OPC Data Access protocol)
+**Wooreen (New Site - Improved Design):**
+- Uses **OPC DA (Data Access)** protocol instead of OPC UA
 - Requires **UA Gateway** to convert OPC data from UA protocol to DA protocol
-- More mature and stable technology based on reliable legacy protocols
-- **Two instances of PI Integration servers** for high availability
+- **PI DA Interface** is used (more mature and stable than PI UA Connector)
+- **Two instances** of PI Integration servers for high availability
+- Vendors: Unified Automations or Metricon for UA Gateway
 
-### 3. **Data Flow Path**
-```
-Battery OPC Server (OT) 
-  → UA Gateway (protocol conversion)
-  → PI DA Interface (in OT network)
-  → Data Diode (security boundary)
-  → PI Data Server (IT network)
-  → Battery Bidding Platform
-```
+**Riverina (Existing Site):**
+- Uses **PI UA Connector** (less stable, based on newer architecture)
+- Has experienced issues with accuracy, frequency, and availability
 
-### 4. **Data Streaming**
-- **Real-time**: OPC data streamed from PI to Battery Bidding platform every **5 seconds**
-- **Historical**: Consolidated historical data collection sent every **5 minutes**
+### 3. **Data Flow**
+1. **OPC Servers** at battery sites (OT network) collect operational data
+2. **UA Gateway** converts UA protocol to DA protocol (Wooreen only)
+3. **PI DA Interface** (deployed in OT network) receives data with buffering capability
+4. Data passes through **Data Diode** to IT network
+5. **PI Data Server** (EA IT) stores centralized data
+6. **Battery Bidding Platform** receives:
+   - Real-time streaming every **5 seconds**
+   - Consolidated historical data every **5 minutes**
 
-### 5. **Reliability Features**
-- **Data buffering** in the PI Interface (deployed in OT network) prevents data loss during connection issues between OT and IT networks
-- PI DA Interface chosen over PI UA Connector for improved stability
+### 4. **Key Benefits**
+- **Data Buffering**: PI Interface in OT network prevents data loss during connection issues
+- **Reliability**: DA protocol is more mature and stable than UA
+- **High Availability**: Dual PI Integration servers at Wooreen
+- **Security**: Uni-directional data flow protects OT systems
 
-This architecture prioritizes **security, reliability, and high availability** while maintaining real-time data access for trading operations.",1964,"Detailed explanation, Relevant content",SUCCESS,
-What are the SoC limits for DPNTBESS and how do they affect availability?,hybrid,Should combine asset info query with documentation search about restrictions,"## DPNTBESS SoC Limits and Availability Impact
+The architecture was improved for Wooreen based on lessons learned from Riverina's stability issues with the PI UA Connector.",2150,"Detailed explanation, Relevant content",SUCCESS,
+What are the SoC limits for DPNTBESS and how do they affect availability?,hybrid,Should combine asset info query with documentation search about restrictions,"Based on the information retrieved, here's what I found about DPNTBESS SoC limits and their effect on availability:
 
-### **Current Status:**
-- **Current SoC:** 33.6 MWh (67.2%)
-- **Min SoC Limit:** 5.0 MWh
-- **Max SoC Limit:** 50.0 MWh
-- **Last Reading:** 3 minutes ago (fresh data)
+## **DPNTBESS SoC Limits**
 
-### **How SoC Limits Affect Availability:**
+**Current Status:**
+- **Current SoC**: 33.6 MWh (67.2%)
+- **Maximum SoC Limit**: 50.0 MWh
+- **Minimum SoC Limit**: 5.0 MWh
+- **Last Reading**: 3 minutes ago (current)
 
-Based on the documentation, DPNTBESS availability is restricted when the battery approaches its SoC limits:
+## **How SoC Limits Affect Availability**
 
-1. **Approaching Maximum SoC (Charging Limit):**
-   - If projected SoC would exceed the max limit (50 MWh), the **LOAD DUID availability** is limited to:
-   - `Availability = 12 * (MAX_SOC_MWH - max_projected_soc)`
-   - This gradually reduces charging capability as it approaches the upper limit
-   - Once the limit would be breached, availability is set to **0 MW** for subsequent intervals
+The bidding system automatically restricts availability when the battery approaches its SoC limits:
 
-2. **Approaching Minimum SoC (Discharging Limit):**
-   - If projected SoC would fall below the min limit (5 MWh), the **GEN DUID availability** is limited similarly
-   - Availability is set to **0 MW** for subsequent intervals to prevent breaching the minimum
+### **Upper SoC Limit (Max 50 MWh)**
+- If the **maximum projected SoC > max SoC limit**, the system limits **LOAD (charging) availability** in the next interval to:
+  - **Availability = 12 × (MAX_SOC_MWH - max_projected_soc)**
+- After this interval, availability is set to **0 MW for the following n intervals** to prevent exceeding the limit
 
-3. **Additional Restrictions:**
-   - **Throughput Limits:** If DPNTBESS would violate throughput limits (over 7.5 hour window) in the next 30 minutes, availability is set to **0 MW** for 30 minutes
-   - **LPA (Local Price Arbitrage):** If an LPA would cause unfavorable charging/discharging, availability is set to **0 MW**
+### **Lower SoC Limit (Min 5 MWh)**
+- If the **minimum projected SoC < min SoC limit**, the system limits **GEN (discharging) availability** in the next interval using a similar calculation
+- Then sets availability to **0 MW for the following n intervals**
 
-### **Current Situation:**
-DPNTBESS is currently at 67.2% SoC (33.6 MWh), which is comfortably within its operating range of 5-50 MWh, so no SoC-based availability restrictions should be active right now.",1552,"Contains data, Combined response",SUCCESS,
+### **Additional Availability Restrictions**
+- **Throughput limits**: If DPNTBESS could violate throughput limits (over 7.5 hour window) in the next 30 minutes, availability is set to **0 MW for 30 minutes**
+- **LPA (Local Price Arbitrage)**: If there's an LPA that may cause unfavorable discharge/charging, availability is set to **0 MW for n intervals**
+
+Currently, DPNTBESS is operating well within its limits at 67.2% SoC, so no restrictions should be active.",1522,"Contains data, Combined response",SUCCESS,
 Show me the current status of all Wooreen batteries,structured,Should query GANNBG1 and GANNBL1 telemetry with current SoC and capabilities,"## Current Status of Wooreen Batteries
 
 Here's the current status of both batteries at the Wooreen (Jeeralang) site:
@@ -135,24 +130,24 @@ What happens when battery telemetry reading is older than 10 minutes?,unstructur
 
 ## When Battery Telemetry Reading is Older Than 10 Minutes:
 
-**The system automatically sets availability to 0 MW for the next n intervals.**
+**The system automatically sets the battery availability to 0 MW for the next n intervals.**
 
 This is a safety mechanism to prevent bidding when the battery's actual state is unknown. Here's why this matters:
 
 ### Key Points:
 
-1. **Automatic Restriction**: If the battery data (particularly SoC readings) is older than 10 minutes, the bidding system will set availability to 0 MW to prevent the battery from being dispatched.
+1. **Automatic Restriction**: If the SoC or other battery telemetry data is stale (older than 10 minutes), the bidding system will zero out the battery's availability to prevent submitting bids based on outdated information.
 
-2. **Safety Measure**: This prevents the system from making bidding decisions based on stale data that may not reflect the current battery state, which could lead to:
-   - Violating SoC limits (going below minimum or above maximum)
-   - Breaching throughput constraints
-   - Failing to deliver on AEMO dispatch instructions
+2. **Data Freshness Requirements**: The system is designed to retrieve battery telemetry (SoC, discharge capacity, etc.) every 10 seconds to ensure real-time accuracy.
 
-3. **Data Quality Monitoring**: The PI system includes quality flags that can identify connectivity problems or when stored values are based on the last known good value rather than current data.
+3. **Quality Flags**: The PI system includes quality flags that can indicate data issues, such as connectivity problems where only the last known good value is available.
 
-4. **Expected Update Frequency**: The system is designed to retrieve battery telemetry (SoC, discharge capacity, etc.) every 10 seconds under normal operation, so a 10-minute gap indicates a significant data issue.
+4. **Risk Mitigation**: This prevents the battery from being dispatched when:
+   - There's a connectivity issue with the data source
+   - The actual SoC may have drifted from the last known value
+   - The battery's true capabilities are uncertain
 
-This is why monitoring telemetry freshness is critical for battery operations - stale data immediately impacts the battery's ability to participate in the market.",1427,"Detailed explanation, Relevant content",SUCCESS,
+This is a critical operational safeguard to ensure Energy Australia doesn't commit to AEMO dispatch targets that the battery may not be able to fulfill due to unknown actual conditions.",1339,"Detailed explanation, Relevant content",SUCCESS,
 Compare revenue performance of RESS2 vs DPNTBESS over last 24 hours,structured,Should query revenue for both batteries and provide comparison,"## Revenue Performance Comparison (Last 24 Hours)
 
 **RESS2 vs DPNTBESS at Darlington Point:**
@@ -164,17 +159,14 @@ Compare revenue performance of RESS2 vs DPNTBESS over last 24 hours,structured,S
 
 ### Key Insights:
 
-- **RESS2** has generated positive revenue of **$2,278.15** over the last 24 hours
-- **DPNTBESS** has incurred a **loss of $3,985.55** over the same period
-- **Net difference**: RESS2 outperformed DPNTBESS by **$6,263.70**
+- **RESS2** is performing well with positive revenue of $2,278.15
+- **DPNTBESS** has negative revenue of -$3,985.55, indicating it's operating at a loss over this period
+- **Net difference**: RESS2 is outperforming DPNTBESS by **$6,263.70** over the last 24 hours
 
-### Analysis:
-DPNTBESS showing negative revenue suggests it may have been:
-- Charging during high-price periods
-- Discharging during low-price periods
-- Experiencing operational constraints or availability issues
-- Following dispatch instructions that resulted in unfavorable market outcomes
+### Possible Reasons for DPNTBESS Negative Revenue:
+- Charging during high-price periods and discharging during low-price periods
+- Providing FCAS services that may not have covered energy arbitrage losses
+- Different bidding strategies or operational constraints
+- Market conditions unfavorable to its dispatch pattern
 
-Both batteries are co-located at Darlington Point in the Riverina, so they face the same market prices. The significant performance difference warrants investigation into dispatch strategies, operational availability, or any technical issues affecting DPNTBESS.
-
-Would you like me to investigate further into dispatch patterns, SoC management, or availability issues for DPNTBESS?",1136,"Contains data, Contains battery ID",SUCCESS,
+Both batteries are co-located at Darlington Point in the Riverina, so they're exposed to the same regional pricing. The performance difference suggests different operational strategies or constraints between the two assets.",1048,"Contains data, Contains battery ID",SUCCESS,
