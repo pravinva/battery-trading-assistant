@@ -141,14 +141,14 @@ class SupervisorAgent(BaseAgent):
         needs_synthesis = False
         
         if agent_type == "data":
-            # Check for raw JSON responses
-            if raw_result.strip().startswith('{') and '"query"' in raw_result:
+            # Check for raw JSON responses (even if prefixed with headers)
+            if '"query"' in raw_result and ('{"query"' in raw_result or '"statement_response"' in raw_result):
+                needs_synthesis = True
+            # Check for responses that start with Genie headers followed by JSON
+            elif raw_result.count('🤖') > 0 and ('{"query"' in raw_result or 'statement_response' in raw_result):
                 needs_synthesis = True
             # Check for raw data arrays or excessive technical details
             elif '["' in raw_result and '"]' in raw_result and raw_result.count('[') > 3:
-                needs_synthesis = True
-            # Check for excessive technical markers
-            elif raw_result.count('🤖') > 0 and ('{"query"' in raw_result or 'statement_response' in raw_result):
                 needs_synthesis = True
         
         if not needs_synthesis:
