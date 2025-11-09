@@ -682,6 +682,7 @@ Question asked: {question}"""
                         
                         if statement_id:
                             try:
+                                print(f"DEBUG: Fetching query results using statement_id: {statement_id}")
                                 # Use statement execution API to get results
                                 from databricks.sdk.service.sql import StatementState
                                 result = w.statement_execution.get_statement(statement_id)
@@ -691,11 +692,38 @@ Question asked: {question}"""
                                     if hasattr(result.result, 'data_array') and result.result.data_array:
                                         query_data = result.result.data_array
                                         print(f"DEBUG: Found query_data from statement: {len(query_data)} rows")
+                                        # Format query data as a readable answer if we don't have genie_response
+                                        if query_data and not genie_response:
+                                            # Get column names if available
+                                            columns = []
+                                            if hasattr(result.result, 'manifest') and result.result.manifest:
+                                                if hasattr(result.result.manifest, 'schema') and result.result.manifest.schema:
+                                                    if hasattr(result.result.manifest.schema, 'columns'):
+                                                        columns = [col.name for col in result.result.manifest.schema.columns]
+                                            
+                                            # Format as table
+                                            formatted_rows = []
+                                            if columns:
+                                                formatted_rows.append(" | ".join(columns))
+                                                formatted_rows.append(" | ".join(["---"] * len(columns)))
+                                            for row in query_data:
+                                                formatted_rows.append(" | ".join(str(val) for val in row))
+                                            genie_response = "\n".join(formatted_rows)
+                                            print(f"DEBUG: Created genie_response from query_data: {genie_response[:200]}")
                                     elif hasattr(result.result, 'rows') and result.result.rows:
                                         query_data = result.result.rows
                                         print(f"DEBUG: Found query_data from statement: {len(query_data)} rows")
+                                        # Format query data as a readable answer if we don't have genie_response
+                                        if query_data and not genie_response:
+                                            formatted_rows = []
+                                            for row in query_data:
+                                                formatted_rows.append(" | ".join(str(val) for val in row))
+                                            genie_response = "\n".join(formatted_rows)
+                                            print(f"DEBUG: Created genie_response from query_data: {genie_response[:200]}")
                             except Exception as e:
                                 print(f"DEBUG: Error getting query result from statement: {e}")
+                                import traceback
+                                traceback.print_exc()
                 
                 # Extract answer/content from message details (if not already found)
                 if not genie_response:
