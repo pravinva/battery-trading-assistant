@@ -18,11 +18,13 @@ import threading
 from databricks.sdk import WorkspaceClient
 
 # Try to import MCP client - fallback if not available
+# Based on: https://docs.databricks.com/aws/en/generative-ai/mcp/managed-mcp
 try:
-    from databricks.langchain.mcp import DatabricksMCPClient
+    from databricks_mcp import DatabricksMCPClient
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
+    print("⚠️  databricks-mcp not installed. Install with: pip install databricks-mcp")
 
 try:
     from databricks_langchain import ChatDatabricks
@@ -53,27 +55,45 @@ w = WorkspaceClient()
 vsc = VectorSearchClient(disable_notice=True)
 
 # Initialize MCP client if available and enabled
+# Based on: https://docs.databricks.com/aws/en/generative-ai/mcp/managed-mcp
+# Genie MCP server URL pattern: https://<workspace-hostname>/api/2.0/mcp/genie/{genie_space_id}
 _mcp_client = None
+_mcp_server_url = None
+
 if MCP_AVAILABLE and USE_MCP:
     try:
-        # For managed MCP servers, connection is handled automatically
-        # Server URL may be workspace-specific or use default managed server
+        # Get workspace hostname for MCP server URL
+        workspace_hostname = w.config.host
+        
+        # Build Genie MCP server URL
+        # Pattern: https://<workspace-hostname>/api/2.0/mcp/genie/{genie_space_id}
         if GENIE_MCP_SERVER_URL:
-            _mcp_client = DatabricksMCPClient(server_url=GENIE_MCP_SERVER_URL)
+            _mcp_server_url = GENIE_MCP_SERVER_URL
         else:
-            # Try to use default managed Genie MCP server
-            # Note: Exact initialization depends on databricks-langchain implementation
-            # This may need adjustment based on actual API
-            _mcp_client = DatabricksMCPClient()
-        print("✅ Genie MCP client initialized")
+            # Use default managed Genie MCP server URL pattern
+            _mcp_server_url = f"{workspace_hostname}/api/2.0/mcp/genie/{GENIE_ROOM_ID}"
+        
+        # Initialize MCP client with workspace_client for authentication
+        # Based on docs: DatabricksMCPClient(server_url=..., workspace_client=...)
+        _mcp_client = DatabricksMCPClient(server_url=_mcp_server_url, workspace_client=w)
+        print(f"✅ Genie MCP client initialized")
+        print(f"   MCP Server URL: {_mcp_server_url}")
+        
+        # Try to discover available tools
+        try:
+            tools = _mcp_client.list_tools()
+            print(f"   Discovered {len(tools)} tools: {[t.name for t in tools]}")
+        except Exception as e:
+            print(f"   ⚠️  Could not list tools: {e}")
+            
     except Exception as e:
         print(f"⚠️  Failed to initialize MCP client: {e}")
         print("   Falling back to direct Genie API calls")
         _mcp_client = None
         USE_MCP = False
 elif USE_MCP and not MCP_AVAILABLE:
-    print("⚠️  USE_GENIE_MCP=true but databricks-langchain not installed")
-    print("   Install with: pip install databricks-langchain")
+    print("⚠️  USE_GENIE_MCP=true but databricks-mcp not installed")
+    print("   Install with: pip install databricks-mcp")
     print("   Falling back to direct Genie API calls")
     USE_MCP = False
 
@@ -788,7 +808,11 @@ Question asked: {question}"""
         raise Exception(error_msg)
 
 def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
-    """Query Genie via MCP server"""
+    """Query Genie via MCP server
+    
+    Based on: https://docs.databricks.com/aws/en/generative-ai/mcp/managed-mcp
+    Genie MCP server exposes tools that can be discovered via list_tools()
+    """
     global chart_data, result_obj
     
     DEBUG_MODE = os.environ.get("DEBUG", "false").lower() == "true"
@@ -796,36 +820,107 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
     try:
         if DEBUG_MODE:
             print(f"DEBUG: Using MCP server to query Genie")
+            print(f"DEBUG: MCP Server URL: {_mcp_server_url}")
         
-        # Call Genie through MCP
-        # Note: Exact API depends on databricks-langchain implementation
-        # This is a placeholder that needs to be adjusted based on actual MCP server API
+        # Discover available tools from MCP server
+        tools = _mcp_client.list_tools()
+        if DEBUG_MODE:
+            print(f"DEBUG: Available MCP tools: {[t.name for t in tools]}")
         
-        # Option 1: If MCP server exposes a tool for Genie queries
-        # The tool name and arguments may vary - check MCP server documentation
-        result = _mcp_client.call_tool(
-            tool_name="query_genie_space",  # Tool name from Genie MCP server
-            arguments={
-                "space_id": GENIE_ROOM_ID,
-                "question": question
-            }
-        )
+        # Find the Genie query tool
+        # Based on docs, Genie MCP server should expose a tool for querying
+        # Common tool names: "query", "genie_query", "query_genie_space", etc.
+        genie_tool = None
+        possible_tool_names = ["query", "genie_query", "query_genie_space", "genie_space_query"]
         
-        # MCP server should return formatted response
-        # Extract components if needed
-        genie_response = result.get("answer") or result.get("response") or str(result)
-        sql_query = result.get("sql") or result.get("query")
-        query_data = result.get("data") or result.get("results")
+        for tool in tools:
+            if tool.name in possible_tool_names or "query" in tool.name.lower() or "genie" in tool.name.lower():
+                genie_tool = tool
+                break
+        
+        if not genie_tool:
+            # If no specific tool found, try the first tool (might be the only one)
+            if tools:
+                genie_tool = tools[0]
+                if DEBUG_MODE:
+                    print(f"DEBUG: Using first available tool: {genie_tool.name}")
+            else:
+                raise Exception("No tools found in Genie MCP server")
+        
+        if DEBUG_MODE:
+            print(f"DEBUG: Using tool: {genie_tool.name}")
+            print(f"DEBUG: Tool description: {genie_tool.description}")
+            print(f"DEBUG: Tool input schema: {genie_tool.inputSchema}")
+        
+        # Call the Genie tool via MCP
+        # Based on docs, tool arguments depend on the tool's inputSchema
+        # For Genie, typically needs: question/content parameter
+        tool_args = {}
+        
+        # Check tool schema to determine correct argument names
+        schema = genie_tool.inputSchema
+        properties = schema.get("properties", {})
+        
+        # Common parameter names: "question", "content", "query", "text"
+        for param_name in ["question", "content", "query", "text"]:
+            if param_name in properties:
+                tool_args[param_name] = question
+                break
+        
+        # If no standard parameter found, try with "question" anyway
+        if not tool_args:
+            tool_args["question"] = question
+        
+        if DEBUG_MODE:
+            print(f"DEBUG: Calling tool with args: {tool_args}")
+        
+        # Call the tool
+        result = _mcp_client.call_tool(genie_tool.name, tool_args)
+        
+        if DEBUG_MODE:
+            print(f"DEBUG: MCP tool result type: {type(result)}")
+            print(f"DEBUG: MCP tool result: {str(result)[:500]}")
+        
+        # Extract response from MCP result
+        # MCP tools return ToolResult objects with .content attribute
+        genie_response = None
+        sql_query = None
+        query_data = None
+        
+        if hasattr(result, 'content'):
+            # ToolResult object
+            genie_response = result.content
+            if isinstance(genie_response, str):
+                # Try to parse JSON if it's a JSON string
+                import json
+                try:
+                    parsed = json.loads(genie_response)
+                    if isinstance(parsed, dict):
+                        genie_response = parsed.get("answer") or parsed.get("response") or genie_response
+                        sql_query = parsed.get("sql") or parsed.get("query")
+                        query_data = parsed.get("data") or parsed.get("results")
+                except:
+                    pass
+        elif isinstance(result, dict):
+            genie_response = result.get("content") or result.get("answer") or result.get("response") or str(result)
+            sql_query = result.get("sql") or result.get("query")
+            query_data = result.get("data") or result.get("results")
+        else:
+            genie_response = str(result)
         
         # Handle chart creation if requested
         if is_visualization_request and query_data:
-            columns = result.get("columns")
+            columns = None
+            if isinstance(result, dict):
+                columns = result.get("columns")
             chart_data = create_plotly_chart(query_data, columns, question)
         
         # Format response
         response_parts = []
         if genie_response:
-            response_parts.append(f"🤖 **Databricks Genie Response:**\n\n{genie_response}")
+            # Format the text to ensure proper spacing
+            formatted_response = format_response_text(genie_response)
+            response_parts.append(f"🤖 **Databricks Genie Response (via MCP):**\n\n{formatted_response}")
         
         if sql_query:
             response_parts.append(f"\n**Generated SQL:**\n```sql\n{sql_query}\n```")

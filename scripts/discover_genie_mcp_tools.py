@@ -8,12 +8,13 @@ import os
 from databricks.sdk import WorkspaceClient
 
 # Try to import MCP client
+# Based on: https://docs.databricks.com/aws/en/generative-ai/mcp/managed-mcp
 try:
-    from databricks.langchain.mcp import DatabricksMCPClient
+    from databricks_mcp import DatabricksMCPClient
     MCP_AVAILABLE = True
 except ImportError:
-    print("❌ databricks-langchain not installed")
-    print("Install with: pip install databricks-langchain")
+    print("❌ databricks-mcp not installed")
+    print("Install with: pip install databricks-mcp")
     exit(1)
 
 # Configuration
@@ -30,13 +31,23 @@ print()
 # Initialize workspace client
 w = WorkspaceClient()
 
+# Initialize workspace client for authentication
+w = WorkspaceClient()
+workspace_hostname = w.config.host
+
+# Build Genie MCP server URL
+# Pattern: https://<workspace-hostname>/api/2.0/mcp/genie/{genie_space_id}
+if GENIE_MCP_SERVER_URL:
+    mcp_server_url = GENIE_MCP_SERVER_URL
+else:
+    mcp_server_url = f"{workspace_hostname}/api/2.0/mcp/genie/{GENIE_ROOM_ID}"
+
+print(f"MCP Server URL: {mcp_server_url}")
+
 # Initialize MCP client
+# Based on docs: DatabricksMCPClient(server_url=..., workspace_client=...)
 try:
-    if GENIE_MCP_SERVER_URL:
-        mcp_client = DatabricksMCPClient(server_url=GENIE_MCP_SERVER_URL)
-    else:
-        # Try to use default managed Genie MCP server
-        mcp_client = DatabricksMCPClient()
+    mcp_client = DatabricksMCPClient(server_url=mcp_server_url, workspace_client=w)
     print("✅ MCP client initialized")
 except Exception as e:
     print(f"❌ Failed to initialize MCP client: {e}")
@@ -44,79 +55,87 @@ except Exception as e:
     print("1. Verify MCP server is enabled in workspace (Agents → MCP Servers)")
     print("2. Check if Genie MCP server is listed")
     print("3. Verify Unity Catalog permissions")
+    print("4. Ensure Genie space ID is correct")
     exit(1)
 
-# Try to discover available tools
+# Discover available tools
+# Based on docs: mcp_client.list_tools() returns list of Tool objects
 print("\n" + "=" * 80)
 print("Discovering Available Tools")
 print("=" * 80)
 
 try:
-    # Try to list tools/resources
-    if hasattr(mcp_client, 'list_tools'):
-        tools = mcp_client.list_tools()
-        print(f"Found {len(tools) if tools else 0} tools:")
-        for tool in tools or []:
-            print(f"  - {tool}")
-    elif hasattr(mcp_client, 'tools'):
-        tools = mcp_client.tools
-        print(f"Found {len(tools) if tools else 0} tools:")
-        for tool in tools or []:
-            print(f"  - {tool}")
-    else:
-        print("⚠️  Could not discover tools automatically")
-        print("Available MCP client methods:")
-        methods = [m for m in dir(mcp_client) if not m.startswith('_')]
-        for method in methods:
-            print(f"  - {method}")
+    tools = mcp_client.list_tools()
+    print(f"✅ Found {len(tools)} tools:")
+    print()
+    for tool in tools:
+        print(f"Tool: {tool.name}")
+        print(f"  Description: {tool.description}")
+        print(f"  Input Schema: {tool.inputSchema}")
+        print()
 except Exception as e:
-    print(f"⚠️  Error discovering tools: {e}")
-    print("\nTrying alternative approach...")
-    # Try to inspect the client object
-    print("\nMCP Client attributes:")
-    attrs = [attr for attr in dir(mcp_client) if not attr.startswith('_')]
-    for attr in attrs[:20]:  # Show first 20
-        print(f"  - {attr}")
+    print(f"❌ Error discovering tools: {e}")
+    import traceback
+    traceback.print_exc()
+    exit(1)
 
-# Try to test a query
+# Test a query using the discovered tools
 print("\n" + "=" * 80)
 print("Testing Genie Query via MCP")
 print("=" * 80)
 
 test_question = "What tables are available in the database?"
 
-# Try different possible tool names
-possible_tool_names = [
-    "query_genie_space",
-    "genie_query",
-    "query_genie",
-    "genie_space_query",
-    "query",
-]
-
-for tool_name in possible_tool_names:
-    print(f"\nTrying tool: {tool_name}")
-    try:
-        result = mcp_client.call_tool(
-            tool_name=tool_name,
-            arguments={
-                "space_id": GENIE_ROOM_ID,
-                "question": test_question
-            }
-        )
-        print(f"✅ Success with {tool_name}!")
-        print(f"Result type: {type(result)}")
-        print(f"Result preview: {str(result)[:200]}...")
-        break
-    except Exception as e:
-        print(f"  ❌ Failed: {e}")
-        continue
+if not tools:
+    print("⚠️  No tools found to test")
 else:
-    print("\n⚠️  None of the common tool names worked")
-    print("You may need to:")
-    print("1. Check MCP server documentation")
-    print("2. Inspect MCP server configuration in workspace")
-    print("3. Use MCP server's tool discovery API")
+    # Use the first tool (or find the query tool)
+    genie_tool = None
+    for tool in tools:
+        if "query" in tool.name.lower() or "genie" in tool.name.lower():
+            genie_tool = tool
+            break
+    
+    if not genie_tool:
+        genie_tool = tools[0]  # Use first tool
+    
+    print(f"Using tool: {genie_tool.name}")
+    print(f"Question: {test_question}")
+    
+    # Determine correct argument name from tool schema
+    schema = genie_tool.inputSchema
+    properties = schema.get("properties", {})
+    
+    tool_args = {}
+    # Common parameter names: "question", "content", "query", "text"
+    for param_name in ["question", "content", "query", "text"]:
+        if param_name in properties:
+            tool_args[param_name] = test_question
+            break
+    
+    # If no standard parameter found, try with "question" anyway
+    if not tool_args:
+        tool_args["question"] = test_question
+    
+    print(f"Tool arguments: {tool_args}")
+    
+    try:
+        result = mcp_client.call_tool(genie_tool.name, tool_args)
+        print(f"\n✅ Success!")
+        print(f"Result type: {type(result)}")
+        
+        # Extract content from ToolResult
+        if hasattr(result, 'content'):
+            content = result.content
+            print(f"Result content type: {type(content)}")
+            print(f"Result content preview:\n{str(content)[:500]}...")
+        else:
+            print(f"Result preview:\n{str(result)[:500]}...")
+            
+    except Exception as e:
+        print(f"\n❌ Error calling tool: {e}")
+        import traceback
+        traceback.print_exc()
 
 print("\n" + "=" * 80)
 print("Discovery Complete")
