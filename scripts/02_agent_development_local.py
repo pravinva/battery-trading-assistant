@@ -1047,25 +1047,25 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
             # IMPORTANT: For text-only responses, text is a TextAttachment object with .content attribute
             candidate_text = None
             if hasattr(attachment, 'text'):
-                    text_obj = attachment.text
-                    # Check if it's a TextAttachment object (has .content attribute)
-                    if hasattr(text_obj, 'content'):
-                        candidate_text = text_obj.content
-                    elif isinstance(text_obj, str):
-                        candidate_text = text_obj
-                    elif text_obj is None:
-                        candidate_text = None
-                    else:
-                        # Try to convert to string
-                        candidate_text = str(text_obj)
-                elif isinstance(attachment, dict):
-                    text_obj = attachment.get('text')
-                    if isinstance(text_obj, dict) and 'content' in text_obj:
-                        candidate_text = text_obj.get('content')
-                    elif isinstance(text_obj, str):
-                        candidate_text = text_obj
-                    else:
-                        candidate_text = None
+                text_obj = attachment.text
+                # Check if it's a TextAttachment object (has .content attribute)
+                if hasattr(text_obj, 'content'):
+                    candidate_text = text_obj.content
+                elif isinstance(text_obj, str):
+                    candidate_text = text_obj
+                elif text_obj is None:
+                    candidate_text = None
+                else:
+                    # Try to convert to string
+                    candidate_text = str(text_obj)
+            elif isinstance(attachment, dict):
+                text_obj = attachment.get('text')
+                if isinstance(text_obj, dict) and 'content' in text_obj:
+                    candidate_text = text_obj.get('content')
+                elif isinstance(text_obj, str):
+                    candidate_text = text_obj
+                else:
+                    candidate_text = None
                 
                 if candidate_text and candidate_text != question and len(candidate_text) > len(question) + 10:
                     if not genie_response:
@@ -1134,27 +1134,27 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
             if result and result.status.state == StatementState.SUCCEEDED and result.result:
                 if hasattr(result.result, 'data_array') and result.result.data_array:
                     query_data = result.result.data_array
-                        
-                        # Get column names for chart creation
-                        columns = []
-                        if hasattr(result.result, 'manifest') and result.result.manifest:
-                            if hasattr(result.result.manifest, 'schema') and result.result.manifest.schema:
-                                if hasattr(result.result.manifest.schema, 'columns'):
-                                    columns = [col.name for col in result.result.manifest.schema.columns]
-                        
-                        # Generate chart ONLY if visualization is explicitly requested
-                        if is_visualization_request and query_data:
-                            chart_data = create_plotly_chart(query_data, columns, question)
-                        
-                        # Format query data as answer if we don't have genie_response
-                        if query_data and not genie_response:
-                            formatted_rows = []
-                            if columns:
-                                formatted_rows.append(" | ".join(columns))
-                                formatted_rows.append(" | ".join(["---"] * len(columns)))
-                            for row in query_data:
-                                formatted_rows.append(" | ".join(str(val) for val in row))
-                            genie_response = "\n".join(formatted_rows)
+                    
+                    # Get column names for chart creation
+                    columns = []
+                    if hasattr(result.result, 'manifest') and result.result.manifest:
+                        if hasattr(result.result.manifest, 'schema') and result.result.manifest.schema:
+                            if hasattr(result.result.manifest.schema, 'columns'):
+                                columns = [col.name for col in result.result.manifest.schema.columns]
+                    
+                    # Generate chart ONLY if visualization is explicitly requested
+                    if is_visualization_request and query_data:
+                        chart_data = create_plotly_chart(query_data, columns, question)
+                    
+                    # Format query data as answer if we don't have genie_response
+                    if query_data and not genie_response:
+                        formatted_rows = []
+                        if columns:
+                            formatted_rows.append(" | ".join(columns))
+                            formatted_rows.append(" | ".join(["---"] * len(columns)))
+                        for row in query_data:
+                            formatted_rows.append(" | ".join(str(val) for val in row))
+                        genie_response = "\n".join(formatted_rows)
                     elif hasattr(result.result, 'rows') and result.result.rows:
                         query_data = result.result.rows
                         
@@ -1202,29 +1202,29 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
             if DEBUG_MODE:
                 print(f"DEBUG: get_message_query_result (legacy) returned: {type(query_result)}")
             if query_result:
-                    # Extract SQL query - try multiple attributes
-                    if not sql_query:
-                        if hasattr(query_result, 'sql_query'):
-                            sql_query = query_result.sql_query
-                        elif hasattr(query_result, 'query'):
-                            sql_query = query_result.query
-                        elif isinstance(query_result, dict):
-                            sql_query = (query_result.get('sql_query') or 
-                                        query_result.get('query') or 
-                                        query_result.get('sql'))
-                    
-                    # Extract query data/results - try multiple structures
-                    if not query_data:
-                        if hasattr(query_result, 'data'):
-                            query_data = query_result.data
-                        elif hasattr(query_result, 'result'):
-                            query_data = query_result.result
-                        elif hasattr(query_result, 'rows'):
-                            query_data = query_result.rows
-                        elif isinstance(query_result, dict):
-                            query_data = (query_result.get('data') or 
-                                         query_result.get('result') or 
-                                         query_result.get('rows'))
+                # Extract SQL query - try multiple attributes
+                if not sql_query:
+                    if hasattr(query_result, 'sql_query'):
+                        sql_query = query_result.sql_query
+                    elif hasattr(query_result, 'query'):
+                        sql_query = query_result.query
+                    elif isinstance(query_result, dict):
+                        sql_query = (query_result.get('sql_query') or 
+                                    query_result.get('query') or 
+                                    query_result.get('sql'))
+                
+                # Extract query data/results - try multiple structures
+                if not query_data:
+                    if hasattr(query_result, 'data'):
+                        query_data = query_result.data
+                    elif hasattr(query_result, 'result'):
+                        query_data = query_result.result
+                    elif hasattr(query_result, 'rows'):
+                        query_data = query_result.rows
+                    elif isinstance(query_result, dict):
+                        query_data = (query_result.get('data') or 
+                                     query_result.get('result') or 
+                                     query_result.get('rows'))
                         
                         # If query_data is a complex object, try to extract rows/values
                         if query_data and hasattr(query_data, 'rows'):
