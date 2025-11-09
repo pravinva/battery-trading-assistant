@@ -1145,20 +1145,34 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
         
     except Exception as e:
         # Pure MCP implementation - raise error instead of falling back
-        error_msg = (
-            f"Genie MCP Error: {str(e)}\n\n"
-            f"Please ensure:\n"
-            f"1. MCP server is enabled in workspace (Agents → MCP Servers)\n"
-            f"2. Genie MCP server is available and accessible\n"
-            f"3. Genie space ID is correct: {GENIE_ROOM_ID}\n"
-            f"4. You have permissions to use the MCP server\n"
-            f"5. MCP Server URL: {_mcp_server_url}\n\n"
-            f"Question asked: {question}"
-        )
+        import traceback
+        error_traceback = traceback.format_exc()
+        
+        # Check if it's a json scoping error
+        if "json" in str(e).lower() and ("local variable" in str(e).lower() or "not defined" in str(e).lower()):
+            error_msg = (
+                f"Genie MCP Error: JSON scoping issue detected\n\n"
+                f"Error: {str(e)}\n\n"
+                f"Full traceback:\n{error_traceback}\n\n"
+                f"This is a code issue - json_module should be imported at function start.\n"
+                f"Please restart Streamlit to reload the module.\n\n"
+                f"Question asked: {question}"
+            )
+        else:
+            error_msg = (
+                f"Genie MCP Error: {str(e)}\n\n"
+                f"Full traceback:\n{error_traceback}\n\n"
+                f"Please ensure:\n"
+                f"1. MCP server is enabled in workspace (Agents → MCP Servers)\n"
+                f"2. Genie MCP server is available and accessible\n"
+                f"3. Genie space ID is correct: {GENIE_ROOM_ID}\n"
+                f"4. You have permissions to use the MCP server\n"
+                f"5. MCP Server URL: {_mcp_server_url}\n\n"
+                f"Question asked: {question}"
+            )
         if DEBUG_MODE:
             print(f"DEBUG: MCP query failed: {e}")
-            import traceback
-            traceback.print_exc()
+            print(error_traceback)
         raise Exception(error_msg)
 
 def query_genie_via_direct_api(question: str, is_visualization_request: bool) -> str:
