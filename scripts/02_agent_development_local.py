@@ -1586,6 +1586,18 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
     # Prioritize Genie's answer - it contains the actual formatted answer with numbers
     response_parts = []
     
+    # chart_data is already initialized at function start
+    chart_type = None
+    
+    # DEBUG: Include raw Genie response for debugging
+    debug_info = []
+    debug_info.append(f"DEBUG: Question: {question}")
+    debug_info.append(f"DEBUG: Message ID: {message_id}")
+    debug_info.append(f"DEBUG: Conversation ID: {conversation_id}")
+    debug_info.append(f"DEBUG: Genie Response (raw): {genie_response}")
+    debug_info.append(f"DEBUG: SQL Query: {sql_query}")
+    debug_info.append(f"DEBUG: Query Data: {str(query_data)[:500] if query_data else 'None'}")
+    
     # Fallback: Try old method if attachments didn't work
     if not genie_response or not sql_query:
         # Try to get query result which contains SQL and data (legacy method)
@@ -1675,20 +1687,8 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
                         query_data = exec_result.result
             except Exception:
                 pass
-        
-        # chart_data is already initialized at function start
-        chart_type = None
-        
-        # DEBUG: Include raw Genie response for debugging
-        debug_info = []
-        debug_info.append(f"DEBUG: Question: {question}")
-        debug_info.append(f"DEBUG: Message ID: {message_id}")
-        debug_info.append(f"DEBUG: Conversation ID: {conversation_id}")
-        debug_info.append(f"DEBUG: Genie Response (raw): {genie_response}")
-        debug_info.append(f"DEBUG: SQL Query: {sql_query}")
-        debug_info.append(f"DEBUG: Query Data: {str(query_data)[:500] if query_data else 'None'}")
-        
-        # Check if we got a valid answer from Genie
+    
+    # Check if we got a valid answer from Genie
         import re
         has_valid_answer = False
         
