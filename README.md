@@ -189,8 +189,253 @@ Show me the revenue performance for all batteries in the last 24 hours
 2. **Mosaic AI Agent Framework**: Production-grade orchestration with MLflow tracking
 3. **Unity Catalog Governance**: All tools governed, lineage tracked
 4. **Agent Evaluation**: Built-in quality metrics (retrieval, groundedness, relevance)
-5. **Streamlit UI**: User-friendly chat interface
+5. **Streamlit UI**: User-friendly chat interface with chart rendering
 6. **Databricks Genie Integration**: Dynamic SQL generation via Genie Conversational API
+7. **Performance Optimized**: Fast response times with minimal API calls
+8. **Conversation Context**: Maintains chat history for follow-up questions
+
+## How the App Works
+
+### Streamlit Interface Behavior
+
+The app provides an interactive chat interface built with Streamlit:
+
+#### **Chat Interface**
+- **Conversation History**: All messages are retained in the session, allowing follow-up questions
+- **Message Display**: 
+  - User messages appear on the right (green theme)
+  - Agent responses appear on the left with Energy Australia branding
+  - Sources are shown in expandable sections below each response
+- **Quick Query Buttons**: Pre-defined queries for common questions (SoC, revenue, throughput)
+- **Real-time Updates**: Responses stream in as the agent processes queries
+
+#### **Chart Rendering**
+- **Automatic Detection**: Charts are automatically detected and rendered when embedded in responses
+- **Plotly Integration**: Uses Plotly for interactive, high-quality visualizations
+- **Chart Types**: Supports line charts, bar charts, and pie charts based on data characteristics
+- **Explicit Requests Only**: Charts are created only when users explicitly request visualization (e.g., "plot", "chart", "graph", "visualize")
+- **No Code Output**: The agent creates visualizations directly - no code examples provided
+
+#### **Source Tracking**
+- **Tool Usage**: Shows which tools were used (Vector Search, Genie SQL)
+- **Expandable Details**: Click to expand and see:
+  - Retrieved documentation chunks (for Vector Search queries)
+  - Generated SQL queries (for Genie queries)
+  - Raw query results
+- **Transparency**: Full visibility into how answers were generated
+
+#### **Performance**
+- **Fast Initial Load**: Agent is cached and loads only when needed
+- **Optimized API Calls**: Minimal redundant calls to Genie API
+- **Conditional Debugging**: Debug logging only when `DEBUG=true` environment variable is set
+
+### App Flow
+
+```
+User Question
+    ↓
+Streamlit App (app/app.py)
+    ↓
+Agent Invocation (LangGraph)
+    ↓
+Tool Selection (search_battery_docs OR query_genie)
+    ↓
+Tool Execution
+    ├── Vector Search → Documentation chunks
+    └── Genie API → SQL generation → Query execution → Results
+    ↓
+Response Assembly
+    ├── Text answer
+    ├── Chart (if requested)
+    └── Sources
+    ↓
+Streamlit Rendering
+    ├── Display text
+    ├── Render Plotly chart
+    └── Show sources
+```
+
+## How the Agent Works
+
+### Agent Architecture
+
+The agent is built using **LangGraph** (Databricks Mosaic AI Agent Framework) with a ReAct (Reasoning + Acting) pattern:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    LangGraph Agent                       │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │         LLM (Claude Sonnet 4.5)                  │   │
+│  │  - Understands user intent                       │   │
+│  │  - Selects appropriate tool                       │   │
+│  │  - Synthesizes final answer                      │   │
+│  └──────────────────────────────────────────────────┘   │
+│                         ↓                                │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │              Tool Selection                      │   │
+│  │  • search_battery_docs (Vector Search)          │   │
+│  │  • query_genie (Dynamic SQL)                     │   │
+│  └──────────────────────────────────────────────────┘   │
+│                         ↓                                │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │            Tool Execution                        │   │
+│  │  ┌──────────────┐      ┌──────────────────┐    │   │
+│  │  │ Vector Search│      │  Genie API       │    │   │
+│  │  │              │      │                  │    │   │
+│  │  │ • Embed query│      │ • Generate SQL    │    │   │
+│  │  │ • Search docs│      │ • Execute query   │    │   │
+│  │  │ • Return top │      │ • Return results │    │   │
+│  │  │   chunks     │      │ • Create chart   │    │   │
+│  │  └──────────────┘      └──────────────────┘    │   │
+│  └──────────────────────────────────────────────────┘   │
+│                         ↓                                │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │         Response Synthesis                       │   │
+│  │  • Combine tool results                         │   │
+│  │  • Format answer                                │   │
+│  │  • Add sources                                  │   │
+│  │  • Embed charts (if requested)                   │   │
+│  └──────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Tool Selection Logic
+
+The agent uses intelligent tool selection based on question type:
+
+#### **1. search_battery_docs (Vector Search)**
+**When Used:**
+- Questions about "how", "why", "explain"
+- Technical concepts and processes
+- Documentation lookups
+- Examples: "How is throughput calculated?", "What are SoC limits?"
+
+**How It Works:**
+1. Embeds user question using `databricks-gte-large-en` model
+2. Searches Vector Search index (`ea_trading.battery_trading.battery_docs_index`)
+3. Retrieves top 3-5 most relevant documentation chunks
+4. Returns chunks with metadata (page numbers, source)
+
+#### **2. query_genie (Dynamic SQL Generation)**
+**When Used:**
+- Data queries (SoC, revenue, throughput, comparisons)
+- Questions requiring SQL execution
+- Time-series analysis
+- Examples: "What's the current SoC for RESS2?", "Show revenue for last 24 hours"
+
+**How It Works:**
+1. Sends natural language question to Genie Conversational API
+2. Genie generates SQL query automatically
+3. Executes query against Delta Lake tables
+4. Returns formatted results
+5. Creates charts if explicitly requested (see Chart Creation below)
+
+### Conversation Flow
+
+The agent maintains conversation context:
+
+```python
+# Conversation history is built from session state
+message_history = [
+    HumanMessage(content="What's the SoC for RESS2?"),
+    AIMessage(content="RESS2 current SoC is 82.7%..."),
+    HumanMessage(content="What about DPNTBESS?"),  # Can reference previous context
+    AIMessage(content="DPNTBESS current SoC is 67.2%...")
+]
+
+# Full history is passed to agent
+response = agent.invoke({
+    "messages": message_history
+})
+```
+
+**Key Behaviors:**
+- **Context Retention**: Previous questions and answers are remembered
+- **Follow-up Questions**: Can ask "What about X?" referring to previous context
+- **Multi-turn Conversations**: Supports complex multi-step queries
+
+### Chart Creation Behavior
+
+Charts are created **only when explicitly requested** by the user:
+
+#### **Explicit Visualization Keywords**
+- "plot", "chart", "graph", "visualize", "visualization"
+- "show me a chart", "display a graph", "create a chart"
+
+#### **Chart Creation Process**
+1. **Detection**: Agent detects explicit visualization request in question
+2. **Data Retrieval**: Genie executes SQL and returns query results
+3. **Chart Generation**: `create_plotly_chart()` function:
+   - Converts query data to pandas DataFrame
+   - Detects chart type (line/bar/pie) based on data and question
+   - Creates Plotly figure with proper styling
+   - Extracts column names from SQL result manifest
+   - Sets axis labels and titles
+4. **Embedding**: Chart JSON is embedded in response with markers:
+   ```
+   [PLOTLY_CHART_START]
+   {"type": "line", "json": {...}, "title": "..."}
+   [PLOTLY_CHART_END]
+   ```
+5. **Rendering**: Streamlit app extracts and renders chart using Plotly
+
+#### **Chart Types**
+- **Line Charts**: Time-series data (dates, timestamps)
+- **Bar Charts**: Categorical comparisons
+- **Pie Charts**: Proportions and distributions
+
+#### **No Automatic Charts**
+- Charts are **NOT** created automatically for multi-row results
+- Charts are **NOT** created unless user explicitly requests visualization
+- This improves performance for data-only queries
+
+### Performance Optimizations
+
+The agent has been optimized for fast response times:
+
+#### **1. Removed Redundant API Calls**
+- **Before**: Called `list_conversation_messages` + `get_message` (redundant)
+- **After**: Extract attachments directly from `start_conversation` Wait object
+- **Savings**: ~500ms-2s per query
+
+#### **2. Direct Attachment Extraction**
+- **Before**: Multiple API calls to get message details
+- **After**: Extract attachments directly from completed message
+- **Savings**: ~300ms-1s per query
+
+#### **3. Conditional Debug Logging**
+- **Before**: Extensive file I/O and logging on every query
+- **After**: Debug logging only when `DEBUG=true` environment variable is set
+- **Savings**: ~100-500ms per query (depending on logging volume)
+
+#### **4. Simplified Message Extraction**
+- **Before**: Complex fallback logic with multiple API calls
+- **After**: Streamlined extraction from Wait object result
+- **Savings**: Reduced complexity and faster execution
+
+#### **5. Chart Creation Only When Needed**
+- **Before**: Charts created automatically for multi-row results
+- **After**: Charts only when explicitly requested
+- **Savings**: Significant time savings for data-only queries
+
+### Error Handling
+
+The agent has robust error handling:
+
+1. **Genie API Failures**: Raises exceptions (doesn't fall back to hardcoded SQL)
+2. **Missing Data**: Explicitly fails if Genie cannot provide valid answer
+3. **Timeout Handling**: Uses Wait object with 60-second timeout
+4. **Status Polling**: Only polls if message isn't already completed
+5. **Tool Validation**: Validates tools are correctly configured before use
+
+### System Prompt
+
+The agent uses a comprehensive system prompt that:
+- Defines role as Energy Australia battery trading expert
+- Specifies tool usage guidelines
+- Enforces professional tone
+- Instructs chart creation behavior
+- Guides response formatting
 
 ## Genie Conversational API Integration
 
