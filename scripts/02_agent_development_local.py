@@ -861,8 +861,10 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
     Based on: https://docs.databricks.com/aws/en/generative-ai/mcp/managed-mcp
     Genie MCP server exposes tools that can be discovered via list_tools()
     """
-    # Ensure json is treated as global, not local
-    global json
+    # Import json at function start to ensure it's always available
+    # This prevents scoping issues when json is used in exception handlers
+    import json as json_module
+    
     DEBUG_MODE = os.environ.get("DEBUG", "false").lower() == "true"
     
     # Initialize variables
@@ -949,7 +951,7 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
                     
                     # Parse JSON response from Genie MCP server
                     try:
-                        parsed = json.loads(content_text)
+                        parsed = json_module.loads(content_text)
                         if DEBUG_MODE:
                             print(f"DEBUG: Parsed JSON keys: {list(parsed.keys()) if isinstance(parsed, dict) else 'Not a dict'}")
                         
@@ -963,7 +965,7 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
                             if content_json_str and isinstance(content_json_str, str):
                                 try:
                                     # Parse the nested JSON content
-                                    content_parsed = json.loads(content_json_str)
+                                    content_parsed = json_module.loads(content_json_str)
                                     if isinstance(content_parsed, dict):
                                         # Extract SQL query
                                         sql_query = content_parsed.get("query") or content_parsed.get("sql")
@@ -1102,7 +1104,7 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
                         poll_content = poll_result.content[0]
                         if hasattr(poll_content, 'text'):
                             try:
-                                parsed = json.loads(poll_content.text)
+                                parsed = json_module.loads(poll_content.text)
                                 genie_response = parsed.get("content") or parsed.get("answer") or parsed.get("response")
                             except:
                                 genie_response = poll_content.text
