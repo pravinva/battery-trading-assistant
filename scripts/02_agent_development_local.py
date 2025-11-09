@@ -1332,12 +1332,13 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
         
         if not is_completed:
             # Only poll if message isn't already completed (fallback case)
-            # Use shorter, faster polling
-            max_poll_time = 30  # Reduced to 30 seconds
+            # Use longer polling time to ensure Genie completes processing
+            max_poll_time = 60  # Increased to 60 seconds to give Genie more time
             poll_interval = 1  # Start with 1 second
             max_poll_interval = 3  # Max 3 seconds between polls
             start_time = time.time()
             poll_count = 0
+            add_genie_log(f"⏳ Polling for message completion (max {max_poll_time}s)...")
             
             while time.time() - start_time < max_poll_time:
                 try:
