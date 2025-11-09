@@ -1138,7 +1138,7 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
         
         # Embed chart if created
         if chart_data:
-            chart_marker = f"\n\n[PLOTLY_CHART_START]\n{json.dumps(chart_data)}\n[PLOTLY_CHART_END]\n"
+            chart_marker = f"\n\n[PLOTLY_CHART_START]\n{json_module.dumps(chart_data)}\n[PLOTLY_CHART_END]\n"
             response += chart_marker
         
         return response
