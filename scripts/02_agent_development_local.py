@@ -750,8 +750,6 @@ def get_battery_info(
     
     return "\n\n".join(output)
 
-# Tool 5: Query Genie (MCP Server or Direct API)
-@tool
 # Global variable to store execution logs for UI display
 _genie_execution_logs = []
 
@@ -769,6 +767,8 @@ def add_genie_log(entry):
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
     _genie_execution_logs.append(f"[{timestamp}] {entry}")
 
+# Tool 5: Query Genie (MCP Server or Direct API)
+@tool
 def query_genie(
     question: Annotated[str, "A natural language question about battery data. Genie will generate and execute SQL automatically."]
 ) -> str:
@@ -1165,13 +1165,19 @@ def query_genie_via_direct_api(question: str, is_visualization_request: bool) ->
     
     DEBUG_MODE = os.environ.get("DEBUG", "false").lower() == "true"
     
+    add_genie_log(f"📡 Starting Genie conversation via Direct API")
+    add_genie_log(f"🏠 Genie Space ID: {GENIE_ROOM_ID}")
+    
     # Use Genie Conversation API
     # Start a conversation in the space with the question as content
     genie = w.genie
+    add_genie_log(f"✅ Genie API client initialized")
     
     # API signature: start_conversation(space_id: str, content: str) -> Wait[GenieMessage]
     # Use positional arguments as shown in the signature
+    add_genie_log(f"📤 Sending question to Genie API...")
     conversation_wait = genie.start_conversation(GENIE_ROOM_ID, question)
+    add_genie_log(f"✅ Conversation started, waiting for response...")
     
     # OPTIMIZED: Use Wait object's built-in waiting mechanism instead of manual polling
     # This is much faster than manual polling
