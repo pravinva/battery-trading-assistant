@@ -86,6 +86,13 @@ def load_agent(_file_mtime, _force_reload=False):
 agent_script_path = Path(__file__).parent.parent / "scripts" / "02_agent_development_local.py"
 file_mtime = agent_script_path.stat().st_mtime if agent_script_path.exists() else 0
 
+# Initialize session state for MCP toggle before loading agent
+if 'use_genie_mcp' not in st.session_state:
+    st.session_state.use_genie_mcp = os.environ.get("USE_GENIE_MCP", "false").lower() == "true"
+
+# Set environment variable based on session state
+os.environ["USE_GENIE_MCP"] = "true" if st.session_state.use_genie_mcp else "false"
+
 # Load agent (cached, but cache invalidates when file changes)
 AGENT_AVAILABLE, agent, SYSTEM_PROMPT, AGENT_ERROR, INDEX_NAME, GENIE_ROOM_ID = load_agent(file_mtime)
 
@@ -428,10 +435,6 @@ with st.sidebar:
     # Genie MCP Toggle
     st.markdown("### 🔌 Configuration")
     
-    # Initialize session state for MCP toggle if not exists
-    if 'use_genie_mcp' not in st.session_state:
-        st.session_state.use_genie_mcp = os.environ.get("USE_GENIE_MCP", "false").lower() == "true"
-    
     # Toggle button for Genie MCP
     use_mcp = st.toggle(
         "Use Genie MCP Server",
@@ -439,7 +442,7 @@ with st.sidebar:
         help="Enable to use Genie via Model Context Protocol (MCP) instead of direct API. Requires databricks-mcp package."
     )
     
-    # Update session state and environment variable
+    # Update session state and environment variable if changed
     if use_mcp != st.session_state.use_genie_mcp:
         st.session_state.use_genie_mcp = use_mcp
         os.environ["USE_GENIE_MCP"] = "true" if use_mcp else "false"
