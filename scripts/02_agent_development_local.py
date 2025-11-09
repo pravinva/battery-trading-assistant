@@ -520,10 +520,20 @@ Question asked: {question}"""
                             # Skip if content is the question itself
                             if content == question:
                                 print(f"DEBUG: Skipping message {idx} - matches question")
-                                # But check attachments - might have answer there
-                                if msg_attachments:
-                                    for att in msg_attachments:
-                                        att_text = getattr(att, 'text', None) or (isinstance(att, dict) and att.get('text'))
+                            # But check attachments - might have answer there
+                            if msg_attachments:
+                                for att in msg_attachments:
+                                    # Check for TextAttachment object
+                                    att_text_obj = getattr(att, 'text', None) or (isinstance(att, dict) and att.get('text'))
+                                    if att_text_obj:
+                                        # Extract content from TextAttachment if it's an object
+                                        if hasattr(att_text_obj, 'content'):
+                                            att_text = att_text_obj.content
+                                        elif isinstance(att_text_obj, str):
+                                            att_text = att_text_obj
+                                        else:
+                                            att_text = str(att_text_obj)
+                                        
                                         if att_text and att_text != question:
                                             print(f"DEBUG: Found text in attachment of question message: {att_text[:200]}")
                                             if not genie_response:
@@ -560,12 +570,22 @@ Question asked: {question}"""
                             # Also check attachments in this message
                             if msg_attachments:
                                 for att in msg_attachments:
-                                    att_text = getattr(att, 'text', None) or (isinstance(att, dict) and att.get('text'))
-                                    if att_text and att_text != question and len(att_text) > len(question) + 10:
-                                        print(f"DEBUG: Found text in message {idx} attachment: {att_text[:200]}")
-                                        if not genie_response:
-                                            genie_response = att_text
-                                            break
+                                    # Check for TextAttachment object
+                                    att_text_obj = getattr(att, 'text', None) or (isinstance(att, dict) and att.get('text'))
+                                    if att_text_obj:
+                                        # Extract content from TextAttachment if it's an object
+                                        if hasattr(att_text_obj, 'content'):
+                                            att_text = att_text_obj.content
+                                        elif isinstance(att_text_obj, str):
+                                            att_text = att_text_obj
+                                        else:
+                                            att_text = str(att_text_obj)
+                                        
+                                        if att_text and att_text != question and len(att_text) > len(question) + 10:
+                                            print(f"DEBUG: Found text in message {idx} attachment: {att_text[:200]}")
+                                            if not genie_response:
+                                                genie_response = att_text
+                                                break
             except Exception as e:
                 # Log error for debugging
                 print(f"DEBUG: Error listing conversation messages: {e}", flush=True)
@@ -693,20 +713,40 @@ Question asked: {question}"""
                     for attachment in attachments:
                         # PRIORITY 1: Extract text response - this is Genie's natural language answer
                         # Per docs: "The attachments array contains Genie's response. It includes the generated text response (text)"
+                        # IMPORTANT: For text-only responses, text is a TextAttachment object with .content attribute
+                        candidate_text = None
                         if hasattr(attachment, 'text'):
-                            candidate_text = attachment.text
+                            text_obj = attachment.text
+                            # Check if it's a TextAttachment object (has .content attribute)
+                            if hasattr(text_obj, 'content'):
+                                candidate_text = text_obj.content
+                                print(f"DEBUG: Found text.content in TextAttachment: {candidate_text[:200] if candidate_text else None}")
+                            elif isinstance(text_obj, str):
+                                candidate_text = text_obj
+                                print(f"DEBUG: Found text as string: {candidate_text[:200] if candidate_text else None}")
+                            elif text_obj is None:
+                                candidate_text = None
+                                print(f"DEBUG: attachment.text is None")
+                            else:
+                                # Try to convert to string
+                                candidate_text = str(text_obj)
+                                print(f"DEBUG: Converted text object to string: {candidate_text[:200] if candidate_text else None}")
                         elif isinstance(attachment, dict):
-                            candidate_text = attachment.get('text')
-                        else:
-                            candidate_text = None
+                            text_obj = attachment.get('text')
+                            if isinstance(text_obj, dict) and 'content' in text_obj:
+                                candidate_text = text_obj.get('content')
+                            elif isinstance(text_obj, str):
+                                candidate_text = text_obj
+                            else:
+                                candidate_text = None
                         
-                        print(f"DEBUG: attachment.text = {candidate_text[:200] if candidate_text else 'None'}")
+                        print(f"DEBUG: Final candidate_text = {candidate_text[:200] if candidate_text else 'None'}")
                         
                         if candidate_text and candidate_text != question and len(candidate_text) > len(question) + 10:
-                            print(f"DEBUG: Found text response in attachment: {candidate_text[:200]}")
+                            print(f"DEBUG: ✅ Found valid text response in attachment: {candidate_text[:200]}")
                             if not genie_response:
                                 genie_response = candidate_text
-                                print(f"DEBUG: Using attachment.text as genie_response")
+                                print(f"DEBUG: ✅ Using attachment.text.content as genie_response")
                         
                         # Extract description from query attachment - this might contain Genie's explanation
                         if hasattr(attachment, 'query'):

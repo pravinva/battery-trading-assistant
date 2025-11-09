@@ -17,8 +17,8 @@ if not GENIE_ROOM_ID:
 w = WorkspaceClient()
 genie = w.genie
 
-# Test question
-question = "What is the total energy throughput for each battery over the last 12 hours?"
+# Test question - use the metadata question that's failing
+question = "What tables are available in the database? Show me all table names and describe what each table contains, including their columns and purpose."
 
 print("=" * 80)
 print("Testing Genie API Directly")
