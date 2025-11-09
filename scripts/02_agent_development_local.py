@@ -265,7 +265,9 @@ def create_plotly_chart(query_data, columns, question):
                         else:
                             default_cols.append(f'column_{i}')
                     df = pd.DataFrame(query_data, columns=default_cols)
-                    if DEBUG_MODE:
+                    # Check if DEBUG_MODE is defined, otherwise default to False
+                    debug_mode = globals().get('DEBUG_MODE', False) or os.environ.get('DEBUG', 'false').lower() == 'true'
+                    if debug_mode:
                         print(f"DEBUG: Using default columns: {default_cols}")
             elif isinstance(query_data[0], dict):
                 # Array of dicts
@@ -284,7 +286,9 @@ def create_plotly_chart(query_data, columns, question):
             return None
         
         # Debug: Print column names
-        print(f"DEBUG: DataFrame columns: {list(df.columns)}")
+        debug_mode = globals().get('DEBUG_MODE', False) or os.environ.get('DEBUG', 'false').lower() == 'true'
+        if debug_mode:
+            print(f"DEBUG: DataFrame columns: {list(df.columns)}")
         
         # Convert string numeric columns to actual numbers
         # BUT preserve date/timestamp columns - don't convert them to numeric
