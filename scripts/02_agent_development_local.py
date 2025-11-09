@@ -172,6 +172,65 @@ def format_response_text(text):
     
     return text.strip()
 
+# Helper function to infer axis labels from column names and question context
+def _infer_axis_label(column_name, question_lower, axis_type):
+    """Infer a meaningful axis label from column name and question context"""
+    col_lower = column_name.lower()
+    
+    # Direct matches for common battery-related columns
+    if 'battery' in col_lower and 'id' in col_lower:
+        return 'Battery'
+    elif 'soc' in col_lower or ('state' in col_lower and 'charge' in col_lower):
+        if 'percent' in col_lower or '%' in col_lower:
+            return 'SoC (%)'
+        elif 'mwh' in col_lower:
+            return 'SoC (MWh)'
+        return 'State of Charge'
+    elif 'revenue' in col_lower:
+        return 'Revenue ($)'
+    elif 'throughput' in col_lower:
+        return 'Throughput (MWh)'
+    elif 'dispatch' in col_lower:
+        return 'Dispatch (MW)'
+    elif 'charge' in col_lower:
+        return 'Charge (MW)'
+    elif 'discharge' in col_lower:
+        return 'Discharge (MW)'
+    elif 'mwh' in col_lower:
+        return 'Energy (MWh)'
+    elif 'mw' in col_lower:
+        return 'Power (MW)'
+    elif 'price' in col_lower:
+        return 'Price ($/MWh)'
+    elif 'time' in col_lower or 'date' in col_lower or 'timestamp' in col_lower:
+        return 'Time'
+    
+    # Infer from question context if column name is generic
+    if col_lower.startswith('column_') or col_lower.startswith('value_'):
+        if axis_type == 'x':
+            if 'battery' in question_lower:
+                return 'Battery'
+            elif 'time' in question_lower or 'over' in question_lower:
+                return 'Time'
+            else:
+                return 'Category'
+        else:  # y-axis
+            if 'soc' in question_lower or 'state of charge' in question_lower:
+                if 'percent' in question_lower or '%' in question_lower:
+                    return 'SoC (%)'
+                return 'SoC (MWh)'
+            elif 'revenue' in question_lower:
+                return 'Revenue ($)'
+            elif 'throughput' in question_lower:
+                return 'Throughput (MWh)'
+            elif 'compare' in question_lower or 'comparison' in question_lower:
+                return 'Value'
+            else:
+                return 'Value'
+    
+    # Default: clean up column name
+    return column_name.replace('_', ' ').title()
+
 # Helper function to create Plotly charts from query data
 def create_plotly_chart(query_data, columns, question):
     """Create a Plotly chart from query results based on the question context"""
@@ -206,7 +265,8 @@ def create_plotly_chart(query_data, columns, question):
                         else:
                             default_cols.append(f'column_{i}')
                     df = pd.DataFrame(query_data, columns=default_cols)
-                    print(f"DEBUG: Using default columns: {default_cols}")
+                    if DEBUG_MODE:
+                        print(f"DEBUG: Using default columns: {default_cols}")
             elif isinstance(query_data[0], dict):
                 # Array of dicts
                 df = pd.DataFrame(query_data)
@@ -366,11 +426,18 @@ def create_plotly_chart(query_data, columns, question):
                 chart_type = 'bar'
                 x_col = cat_cols[0]
                 y_col = numeric_cols[0]
+                # Infer better axis labels from question context
+                x_label = _infer_axis_label(x_col, question_lower, 'x')
+                y_label = _infer_axis_label(y_col, question_lower, 'y')
                 # Create bar chart with colors
                 fig = px.bar(df, x=x_col, y=y_col, 
-                            title=f"{y_col.replace('_', ' ').title()} by {x_col.replace('_', ' ').title()}",
+                            title=f"{y_label} by {x_label}",
                             color=x_col,
+                            labels={x_col: x_label, y_col: y_label},
                             color_discrete_sequence=px.colors.qualitative.Set2)
+                # Explicitly set axis titles
+                fig.update_xaxes(title_text=x_label)
+                fig.update_yaxes(title_text=y_label)
             elif len(df.columns) >= 2:
                 chart_type = 'bar'
                 # Try to identify which column is numeric
@@ -383,11 +450,18 @@ def create_plotly_chart(query_data, columns, question):
                     y_col = df.columns[1]
                     # Force convert y to numeric
                     df[y_col] = pd.to_numeric(df[y_col], errors='coerce')
+                # Infer better axis labels from question context
+                x_label = _infer_axis_label(x_col, question_lower, 'x')
+                y_label = _infer_axis_label(y_col, question_lower, 'y')
                 # Create bar chart with colors
                 fig = px.bar(df, x=x_col, y=y_col, 
-                            title=f"{y_col.replace('_', ' ').title()} by {x_col.replace('_', ' ').title()}",
+                            title=f"{y_label} by {x_label}",
                             color=x_col,
+                            labels={x_col: x_label, y_col: y_label},
                             color_discrete_sequence=px.colors.qualitative.Set2)
+                # Explicitly set axis titles
+                fig.update_xaxes(title_text=x_label)
+                fig.update_yaxes(title_text=y_label)
             else:
                 return None
         
@@ -418,11 +492,18 @@ def create_plotly_chart(query_data, columns, question):
                     y_col = df.columns[1]
                     # Force convert y to numeric
                     df[y_col] = pd.to_numeric(df[y_col], errors='coerce')
+                # Infer better axis labels from question context
+                x_label = _infer_axis_label(x_col, question_lower, 'x')
+                y_label = _infer_axis_label(y_col, question_lower, 'y')
                 # Create bar chart with colors
                 fig = px.bar(df, x=x_col, y=y_col, 
-                            title=f"{y_col.replace('_', ' ').title()} by {x_col.replace('_', ' ').title()}",
+                            title=f"{y_label} by {x_label}",
                             color=x_col,
+                            labels={x_col: x_label, y_col: y_label},
                             color_discrete_sequence=px.colors.qualitative.Set2)
+                # Explicitly set axis titles
+                fig.update_xaxes(title_text=x_label)
+                fig.update_yaxes(title_text=y_label)
             elif len(df.columns) == 1 and len(df) > 1:
                 # Single column with multiple rows - create simple bar chart
                 chart_type = 'bar'
