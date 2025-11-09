@@ -19,14 +19,27 @@ def _get_genie_query_function():
     """Lazy import of query_genie function from existing implementation"""
     global _agent_module
     if _agent_module is None:
-        # Import the agent module dynamically
+        # Import the agent module dynamically with error handling
         agent_script_path = Path(__file__).parent.parent / "scripts" / "02_agent_development_local.py"
         if agent_script_path.exists():
-            import importlib.util
-            spec = importlib.util.spec_from_file_location("agent_module", agent_script_path)
-            _agent_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(_agent_module)
-    return _agent_module
+            try:
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("agent_module", agent_script_path)
+                _agent_module = importlib.util.module_from_spec(spec)
+                # Suppress print statements during import to avoid noise
+                import sys
+                import io
+                old_stdout = sys.stdout
+                sys.stdout = io.StringIO()
+                try:
+                    spec.loader.exec_module(_agent_module)
+                finally:
+                    sys.stdout = old_stdout
+            except Exception as e:
+                # If import fails, set to a sentinel value to avoid retrying
+                _agent_module = False
+                print(f"⚠️  Warning: Could not import agent module: {e}")
+    return _agent_module if _agent_module is not False else None
 
 
 class DataAgent(BaseAgent):

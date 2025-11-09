@@ -18,6 +18,41 @@ import json
 import re
 import plotly.graph_objects as go
 
+# Cache supervisor initialization
+@st.cache_resource
+def load_supervisor(_file_mtime, _force_reload=False):
+    """Load Multi-Agent Supervisor lazily"""
+    SUPERVISOR_AVAILABLE = False
+    SUPERVISOR_ERROR = None
+    supervisor = None
+    
+    try:
+        supervisor_script_path = Path(__file__).parent.parent / "scripts" / "02_agent_supervisor.py"
+        if supervisor_script_path.exists():
+            import sys
+            import importlib
+            # Clear cached modules
+            modules_to_remove = [k for k in sys.modules.keys() if 'supervisor' in k.lower() or 'agents' in k.lower()]
+            for mod in modules_to_remove:
+                if mod in sys.modules:
+                    del sys.modules[mod]
+            
+            importlib.invalidate_caches()
+            
+            spec = importlib.util.spec_from_file_location("supervisor_module", supervisor_script_path)
+            supervisor_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(supervisor_module)
+            
+            supervisor = supervisor_module.supervisor
+            SUPERVISOR_AVAILABLE = True
+        else:
+            SUPERVISOR_ERROR = f"Supervisor script not found at {supervisor_script_path}"
+    except Exception as e:
+        SUPERVISOR_AVAILABLE = False
+        SUPERVISOR_ERROR = str(e)
+    
+    return SUPERVISOR_AVAILABLE, supervisor, SUPERVISOR_ERROR
+
 # Cache agent initialization to avoid reloading on every page refresh
 # Use file modification time to bust cache when file changes
 @st.cache_resource
@@ -102,6 +137,11 @@ os.environ["USE_GENIE_MCP"] = "true" if st.session_state.use_genie_mcp else "fal
 
 # Load agent (cached, but cache invalidates when file changes)
 AGENT_AVAILABLE, agent, SYSTEM_PROMPT, AGENT_ERROR, INDEX_NAME, GENIE_ROOM_ID = load_agent(file_mtime)
+
+# Load supervisor (cached, but cache invalidates when file changes)
+supervisor_script_path = Path(__file__).parent.parent / "scripts" / "02_agent_supervisor.py"
+supervisor_file_mtime = supervisor_script_path.stat().st_mtime if supervisor_script_path.exists() else 0
+SUPERVISOR_AVAILABLE, supervisor, SUPERVISOR_ERROR = load_supervisor(supervisor_file_mtime)
 
 # Get Genie room name from ID
 @st.cache_resource
@@ -439,29 +479,58 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Genie MCP Toggle
+    # Agent Mode Toggle
     st.markdown("### 🔌 Configuration")
     
-    # Toggle button for Genie MCP
-    use_mcp = st.toggle(
-        "Use Genie MCP Server",
-        value=st.session_state.use_genie_mcp,
-        help="Enable to use Genie via Model Context Protocol (MCP) instead of direct API. Requires databricks-mcp package."
+    # Initialize agent mode if not set
+    if 'agent_mode' not in st.session_state:
+        st.session_state.agent_mode = "single"  # "single" or "multi"
+    
+    # Agent mode selector
+    agent_mode = st.radio(
+        "Agent Architecture",
+        ["Single Agent", "Multi-Agent Supervisor"],
+        index=0 if st.session_state.agent_mode == "single" else 1,
+        help="Single Agent: Traditional LangGraph agent with tools. Multi-Agent Supervisor: Routes queries to specialized agents."
     )
     
-    # Update session state and environment variable if changed
-    if use_mcp != st.session_state.use_genie_mcp:
-        st.session_state.use_genie_mcp = use_mcp
-        os.environ["USE_GENIE_MCP"] = "true" if use_mcp else "false"
-        # Clear agent cache to reload with new setting
+    # Update session state
+    new_mode = "single" if agent_mode == "Single Agent" else "multi"
+    if new_mode != st.session_state.agent_mode:
+        st.session_state.agent_mode = new_mode
+        # Clear caches to reload
         load_agent.clear()
+        if 'supervisor' in globals():
+            load_supervisor.clear()
         st.rerun()
     
-    # Show current MCP status
-    if use_mcp:
-        st.success("✅ Genie MCP enabled")
+    st.markdown("---")
+    
+    # Genie MCP Toggle (only for single agent mode)
+    if st.session_state.agent_mode == "single":
+        # Toggle button for Genie MCP
+        use_mcp = st.toggle(
+            "Use Genie MCP Server",
+            value=st.session_state.use_genie_mcp,
+            help="Enable to use Genie via Model Context Protocol (MCP) instead of direct API. Requires databricks-mcp package."
+        )
+        
+        # Update session state and environment variable if changed
+        if use_mcp != st.session_state.use_genie_mcp:
+            st.session_state.use_genie_mcp = use_mcp
+            os.environ["USE_GENIE_MCP"] = "true" if use_mcp else "false"
+            # Clear agent cache to reload with new setting
+            load_agent.clear()
+            st.rerun()
+        
+        # Show current MCP status
+        if use_mcp:
+            st.success("✅ Genie MCP enabled")
+        else:
+            st.info("ℹ️ Using direct Genie API")
     else:
-        st.info("ℹ️ Using direct Genie API")
+        # Multi-Agent Supervisor mode
+        st.info("🤖 Multi-Agent Supervisor Mode\n\nRoutes queries to:\n- Data Agent (Genie)\n- Docs Agent (Vector Search)")
     
     st.markdown("---")
     
@@ -478,11 +547,11 @@ with st.sidebar:
     # Quick query buttons - just set the query, processing happens in main area
     for query in quick_queries:
         if st.button(f"💬 {query[:40]}...", key=f"quick_{hash(query)}"):
-            if AGENT_AVAILABLE:
+            if (st.session_state.agent_mode == "multi" and SUPERVISOR_AVAILABLE) or (st.session_state.agent_mode == "single" and AGENT_AVAILABLE):
                 # Set query to be processed in main area
                 st.session_state.pending_query = query
             else:
-                st.error("Agent not available")
+                st.error("Agent/Supervisor not available")
     
     st.markdown("---")
     
@@ -779,72 +848,30 @@ if "pending_query" in st.session_state and st.session_state.pending_query:
     with st.chat_message("assistant"):
         with st.spinner("🤔 Thinking..."):
             try:
-                # Build full conversation history (before adding current prompt to session state)
-                message_history = build_message_history()
-                # Add current prompt to history
-                message_history.append(HumanMessage(content=prompt))
-                
-                # Invoke agent with full conversation history
-                response = agent.invoke({
-                    "messages": message_history
-                })
-                
-                # NOW add user message to session state (after agent invocation)
-                st.session_state.messages.append({"role": "user", "content": prompt})
-                
-                # Extract sources
-                sources = extract_sources(response["messages"])
-                
-                # Get assistant response
-                assistant_response = response["messages"][-1].content
-                render_response_with_charts(assistant_response)
-                
-                # Display sources
-                if sources["tools_used"]:
-                    st.markdown("---")
-                    tools_used_str = ", ".join(set(sources["tools_used"]))
-                    st.caption(f"📊 **Sources:** {tools_used_str}")
+                # Check which mode we're in
+                if st.session_state.agent_mode == "multi" and SUPERVISOR_AVAILABLE:
+                    # Multi-Agent Supervisor mode
+                    assistant_response = supervisor.process(prompt)
                     
-                    # Show expanders for detailed results
-                    if sources["vector_search"]:
-                        with st.expander("🔍 Vector Search Results", expanded=False):
-                            for idx, vs_result in enumerate(sources["vector_search"], 1):
-                                st.markdown(f"**Query {idx}:** {vs_result['query']}")
-                                st.text_area("Result:", vs_result['result'], height=150, key=f"vs_{idx}", label_visibility="collapsed")
+                    # Get supervisor logs
+                    supervisor_logs = supervisor.get_logs()
                     
-                    if sources["sql_queries"]:
-                        with st.expander("💾 SQL Query Results", expanded=False):
-                            for idx, sql_result in enumerate(sources["sql_queries"], 1):
-                                st.markdown(f"**Tool:** `{sql_result['tool']}`")
-                                st.markdown(f"**Arguments:** `{json.dumps(sql_result['args'], indent=2)}`")
-                                st.text_area("Result:", sql_result['result'], height=150, key=f"sql_{idx}", label_visibility="collapsed")
-                
-                # Add to session state with sources
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": assistant_response,
-                    "sources": sources
-                })
-                
-            except Exception as e:
-                error_msg = f"Sorry, I encountered an error: {str(e)}"
-                st.error(error_msg)
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": error_msg
-                })
-
-# Chat input - process immediately
-if AGENT_AVAILABLE:
-    if prompt := st.chat_input("Ask a question about battery operations, trading, or technical documentation..."):
-        # Display user message
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        
-        # Get agent response
-        with st.chat_message("assistant"):
-            with st.spinner("🤔 Thinking..."):
-                try:
+                    # Add user message to session state
+                    st.session_state.messages.append({"role": "user", "content": prompt})
+                    
+                    # Render response
+                    render_response_with_charts(assistant_response)
+                    
+                    # Display supervisor logs
+                    if supervisor_logs:
+                        with st.expander("📋 Supervisor Execution Logs", expanded=False):
+                            for log in supervisor_logs:
+                                st.text(log)
+                    
+                    # Add assistant response to session state
+                    st.session_state.messages.append({"role": "assistant", "content": assistant_response})
+                else:
+                    # Single Agent mode (original LangGraph agent)
                     # Build full conversation history (before adding current prompt to session state)
                     message_history = build_message_history()
                     # Add current prompt to history
@@ -865,7 +892,7 @@ if AGENT_AVAILABLE:
                     assistant_response = response["messages"][-1].content
                     render_response_with_charts(assistant_response)
                     
-                    # Display sources
+                    # Display sources (only for single agent mode)
                     if sources["tools_used"]:
                         st.markdown("---")
                         tools_used_str = ", ".join(set(sources["tools_used"]))
@@ -876,54 +903,14 @@ if AGENT_AVAILABLE:
                             with st.expander("🔍 Vector Search Results", expanded=False):
                                 for idx, vs_result in enumerate(sources["vector_search"], 1):
                                     st.markdown(f"**Query {idx}:** {vs_result['query']}")
-                                    st.text_area("Result:", vs_result['result'], height=150, key=f"chat_vs_{idx}", label_visibility="collapsed")
+                                    st.text_area("Result:", vs_result['result'], height=150, key=f"vs_{idx}", label_visibility="collapsed")
                         
                         if sources["sql_queries"]:
                             with st.expander("💾 SQL Query Results", expanded=False):
-                                for sql_idx, sql_result in enumerate(sources["sql_queries"], 1):
-                                    tool_name = sql_result['tool']
-                                    if tool_name == 'query_genie':
-                                        st.markdown(f"**Tool:** `{tool_name}` (🤖 **Databricks Genie - Dynamic SQL Generation**)")
-                                        if 'question' in sql_result.get('args', {}):
-                                            st.markdown(f"**Natural Language Question:** {sql_result['args']['question']}")
-                                        
-                                        # Get execution logs from agent module stored in session state
-                                        try:
-                                            agent_module_logs = st.session_state.get('agent_module')
-                                            if agent_module_logs and hasattr(agent_module_logs, 'get_genie_logs'):
-                                                try:
-                                                    logs = agent_module_logs.get_genie_logs()
-                                                    if logs:
-                                                        with st.expander("📋 Execution Logs (MCP vs Direct API)", expanded=True):
-                                                            for log_entry in logs:
-                                                                st.text(log_entry)
-                                                except Exception as log_error:
-                                                    # Silently fail if log retrieval fails - don't break the UI
-                                                    if os.environ.get("DEBUG", "false").lower() == "true":
-                                                        st.caption(f"⚠️ Could not retrieve logs: {log_error}")
-                                        except Exception as e:
-                                            # Silently fail if logs not available - don't break the UI
-                                            pass
-                                        
-                                        # Extract SQL query from Genie response if present
-                                        result_text = sql_result.get('result', '')
-                                        if '```sql' in result_text:
-                                            # Extract SQL from markdown code block
-                                            sql_start = result_text.find('```sql') + 6
-                                            sql_end = result_text.find('```', sql_start)
-                                            if sql_end > sql_start:
-                                                genie_sql = result_text[sql_start:sql_end].strip()
-                                                st.markdown("**🔍 Dynamically Generated SQL:**")
-                                                st.code(genie_sql, language='sql')
-                                                st.caption("✨ This SQL was generated by Genie based on your natural language question - not hardcoded!")
-                                        
-                                        st.markdown("**Genie Response:**")
-                                        st.text_area("Result:", result_text, height=200, key=f"chat_genie_{sql_idx}", label_visibility="collapsed")
-                                    else:
-                                        st.markdown(f"**Tool:** `{tool_name}` (Predefined SQL Tool)")
-                                        if sql_result.get('args'):
-                                            st.markdown(f"**Arguments:** `{json.dumps(sql_result['args'], indent=2)}`")
-                                        st.text_area("Result:", sql_result['result'], height=200, key=f"chat_sql_{sql_idx}", label_visibility="collapsed")
+                                for idx, sql_result in enumerate(sources["sql_queries"], 1):
+                                    st.markdown(f"**Tool:** `{sql_result['tool']}`")
+                                    st.markdown(f"**Arguments:** `{json.dumps(sql_result['args'], indent=2)}`")
+                                    st.text_area("Result:", sql_result['result'], height=150, key=f"sql_{idx}", label_visibility="collapsed")
                     
                     # Add to session state with sources
                     st.session_state.messages.append({
@@ -931,6 +918,136 @@ if AGENT_AVAILABLE:
                         "content": assistant_response,
                         "sources": sources
                     })
+                
+            except Exception as e:
+                error_msg = f"Sorry, I encountered an error: {str(e)}"
+                st.error(error_msg)
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": error_msg
+                })
+
+# Chat input - process immediately
+if (st.session_state.agent_mode == "multi" and SUPERVISOR_AVAILABLE) or (st.session_state.agent_mode == "single" and AGENT_AVAILABLE):
+    if prompt := st.chat_input("Ask a question about battery operations, trading, or technical documentation..."):
+        # Display user message
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Get agent response
+        with st.chat_message("assistant"):
+            with st.spinner("🤔 Thinking..."):
+                try:
+                    # Check which mode we're in
+                    if st.session_state.agent_mode == "multi" and SUPERVISOR_AVAILABLE:
+                        # Multi-Agent Supervisor mode
+                        assistant_response = supervisor.process(prompt)
+                        
+                        # Get supervisor logs
+                        supervisor_logs = supervisor.get_logs()
+                        
+                        # Add user message to session state
+                        st.session_state.messages.append({"role": "user", "content": prompt})
+                        
+                        # Render response
+                        render_response_with_charts(assistant_response)
+                        
+                        # Display supervisor logs
+                        if supervisor_logs:
+                            with st.expander("📋 Supervisor Execution Logs", expanded=False):
+                                for log in supervisor_logs:
+                                    st.text(log)
+                        
+                        # Add assistant response to session state
+                        st.session_state.messages.append({"role": "assistant", "content": assistant_response})
+                    else:
+                        # Single Agent mode (original LangGraph agent)
+                        # Build full conversation history (before adding current prompt to session state)
+                        message_history = build_message_history()
+                        # Add current prompt to history
+                        message_history.append(HumanMessage(content=prompt))
+                        
+                        # Invoke agent with full conversation history
+                        response = agent.invoke({
+                            "messages": message_history
+                        })
+                        
+                        # NOW add user message to session state (after agent invocation)
+                        st.session_state.messages.append({"role": "user", "content": prompt})
+                        
+                        # Extract sources
+                        sources = extract_sources(response["messages"])
+                        
+                        # Get assistant response
+                        assistant_response = response["messages"][-1].content
+                        render_response_with_charts(assistant_response)
+                        
+                        # Display sources (only for single agent mode)
+                        if sources["tools_used"]:
+                            st.markdown("---")
+                            tools_used_str = ", ".join(set(sources["tools_used"]))
+                            st.caption(f"📊 **Sources:** {tools_used_str}")
+                            
+                            # Show expanders for detailed results
+                            if sources["vector_search"]:
+                                with st.expander("🔍 Vector Search Results", expanded=False):
+                                    for idx, vs_result in enumerate(sources["vector_search"], 1):
+                                        st.markdown(f"**Query {idx}:** {vs_result['query']}")
+                                        st.text_area("Result:", vs_result['result'], height=150, key=f"chat_vs_{idx}", label_visibility="collapsed")
+                            
+                            if sources["sql_queries"]:
+                                with st.expander("💾 SQL Query Results", expanded=False):
+                                    for sql_idx, sql_result in enumerate(sources["sql_queries"], 1):
+                                        tool_name = sql_result['tool']
+                                        if tool_name == 'query_genie':
+                                            st.markdown(f"**Tool:** `{tool_name}` (🤖 **Databricks Genie - Dynamic SQL Generation**)")
+                                            if 'question' in sql_result.get('args', {}):
+                                                st.markdown(f"**Natural Language Question:** {sql_result['args']['question']}")
+                                            
+                                            # Get execution logs from agent module stored in session state
+                                            try:
+                                                agent_module_logs = st.session_state.get('agent_module')
+                                                if agent_module_logs and hasattr(agent_module_logs, 'get_genie_logs'):
+                                                    try:
+                                                        logs = agent_module_logs.get_genie_logs()
+                                                        if logs:
+                                                            with st.expander("📋 Execution Logs (MCP vs Direct API)", expanded=True):
+                                                                for log_entry in logs:
+                                                                    st.text(log_entry)
+                                                    except Exception as log_error:
+                                                        # Silently fail if log retrieval fails - don't break the UI
+                                                        if os.environ.get("DEBUG", "false").lower() == "true":
+                                                            st.caption(f"⚠️ Could not retrieve logs: {log_error}")
+                                            except Exception as e:
+                                                # Silently fail if logs not available - don't break the UI
+                                                pass
+                                            
+                                            # Extract SQL query from Genie response if present
+                                            result_text = sql_result.get('result', '')
+                                            if '```sql' in result_text:
+                                                # Extract SQL from markdown code block
+                                                sql_start = result_text.find('```sql') + 6
+                                                sql_end = result_text.find('```', sql_start)
+                                                if sql_end > sql_start:
+                                                    genie_sql = result_text[sql_start:sql_end].strip()
+                                                    st.markdown("**🔍 Dynamically Generated SQL:**")
+                                                    st.code(genie_sql, language='sql')
+                                                    st.caption("✨ This SQL was generated by Genie based on your natural language question - not hardcoded!")
+                                            
+                                            st.markdown("**Genie Response:**")
+                                            st.text_area("Result:", result_text, height=200, key=f"chat_genie_{sql_idx}", label_visibility="collapsed")
+                                        else:
+                                            st.markdown(f"**Tool:** `{tool_name}` (Predefined SQL Tool)")
+                                            if sql_result.get('args'):
+                                                st.markdown(f"**Arguments:** `{json.dumps(sql_result['args'], indent=2)}`")
+                                            st.text_area("Result:", sql_result['result'], height=200, key=f"chat_sql_{sql_idx}", label_visibility="collapsed")
+                        
+                        # Add to session state with sources
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": assistant_response,
+                            "sources": sources
+                        })
                     
                 except Exception as e:
                     import traceback
