@@ -11,18 +11,20 @@ from .docs_agent import DocsAgent
 from typing import Dict, Any, Optional, List
 import concurrent.futures
 import threading
+import re
 
 
 class SupervisorAgent(BaseAgent):
     """Supervisor agent that routes queries to specialized sub-agents"""
     
-    def __init__(self, data_agent: DataAgent, docs_agent: DocsAgent):
+    def __init__(self, data_agent: DataAgent, docs_agent: DocsAgent, llm_endpoint: str = "databricks-claude-sonnet-4-5"):
         """
         Initialize Supervisor Agent
         
         Args:
             data_agent: Data agent for SQL queries
             docs_agent: Docs agent for documentation queries
+            llm_endpoint: LLM endpoint for synthesis (optional, defaults to same as Single Agent)
         """
         super().__init__(
             name="supervisor",
@@ -30,7 +32,154 @@ class SupervisorAgent(BaseAgent):
         )
         self.data_agent = data_agent
         self.docs_agent = docs_agent
+        self.llm_endpoint = llm_endpoint
         self._execution_logs = []
+        self._llm = None
+    
+    def _get_llm(self):
+        """Lazy load LLM for synthesis"""
+        if self._llm is None:
+            try:
+                try:
+                    from databricks_langchain import ChatDatabricks
+                except ImportError:
+                    from langchain_community.chat_models import ChatDatabricks
+                self._llm = ChatDatabricks(endpoint=self.llm_endpoint, temperature=0.1)
+            except Exception as e:
+                # If LLM fails to load, that's okay - we'll fallback to concatenation
+                self._llm = False
+                self._log(f"⚠️  LLM not available for synthesis: {e}")
+        return self._llm if self._llm is not False else None
+    
+    def _clean_raw_output(self, raw_output: str, output_type: str = "data") -> str:
+        """
+        Clean raw output by removing debug info and formatting
+        
+        Args:
+            raw_output: Raw output from agent
+            output_type: "data" or "docs"
+            
+        Returns:
+            Cleaned output
+        """
+        if not raw_output:
+            return ""
+        
+        cleaned = raw_output
+        
+        # Remove DEBUG INFO sections
+        cleaned = re.sub(r'DEBUG INFO.*?```.*?```', '', cleaned, flags=re.DOTALL)
+        cleaned = re.sub(r'DEBUG:.*?\n', '', cleaned)
+        
+        # Remove raw query results markers if they're just debug
+        if output_type == "data":
+            # Keep SQL queries but remove excessive debug
+            cleaned = re.sub(r'DEBUG: Question:.*?\n', '', cleaned)
+            cleaned = re.sub(r'DEBUG: Message ID:.*?\n', '', cleaned)
+            cleaned = re.sub(r'DEBUG: Conversation ID:.*?\n', '', cleaned)
+            cleaned = re.sub(r'DEBUG: Genie Response \(raw\):.*?\n', '', cleaned)
+            cleaned = re.sub(r'DEBUG: SQL Query:.*?\n', '', cleaned)
+            cleaned = re.sub(r'DEBUG: Query Data:.*?\n', '', cleaned)
+            
+            # Remove excessive "Raw Query Results" if it's just arrays
+            # But keep formatted SQL queries
+            if '```sql' in cleaned:
+                # Keep SQL blocks
+                pass
+            else:
+                # Remove raw array outputs like ['RESS 2', '62.0', '82.7']
+                cleaned = re.sub(r'Raw Query Results:.*?\[.*?\]', '', cleaned, flags=re.DOTALL)
+        
+        # Clean up multiple newlines
+        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+        
+        return cleaned.strip()
+    
+    def _synthesize_with_llm(self, question: str, data_result: str, docs_result: str) -> Optional[str]:
+        """
+        Synthesize agent outputs using LLM
+        
+        Args:
+            question: Original user question
+            data_result: Raw output from DataAgent
+            docs_result: Raw output from DocsAgent
+            
+        Returns:
+            Synthesized response or None if synthesis fails
+        """
+        llm = self._get_llm()
+        if not llm:
+            return None
+        
+        try:
+            # Clean inputs
+            cleaned_data = self._clean_raw_output(data_result, "data")
+            cleaned_docs = self._clean_raw_output(docs_result, "docs")
+            
+            # Check for chart markers in data result (preserve them)
+            chart_markers = ""
+            if "[PLOTLY_CHART_START]" in data_result and "[PLOTLY_CHART_END]" in data_result:
+                import re as re_module
+                chart_match = re_module.search(r'\[PLOTLY_CHART_START\].*?\[PLOTLY_CHART_END\]', data_result, re_module.DOTALL)
+                if chart_match:
+                    chart_markers = chart_match.group(0)
+                    # Remove chart markers from cleaned_data so they don't appear in prompt
+                    cleaned_data = re_module.sub(r'\[PLOTLY_CHART_START\].*?\[PLOTLY_CHART_END\]', '', cleaned_data, flags=re_module.DOTALL)
+            
+            # Build synthesis prompt
+            synthesis_prompt = f"""You are a helpful assistant that synthesizes information from multiple sources to answer user questions about battery operations and trading.
+
+User Question: {question}
+
+Data Analysis Results (from SQL queries via Databricks Genie):
+{cleaned_data}
+
+Documentation Results (from technical documentation):
+{cleaned_docs}
+
+Please synthesize these results into a clear, coherent answer that:
+1. Directly answers the user's question in a natural, conversational way
+2. Combines relevant information from both data and documentation seamlessly
+3. Includes specific numbers/values from the data when relevant (e.g., SoC percentages, revenue amounts, throughput values)
+4. Explains concepts from documentation when helpful for understanding
+5. Uses proper formatting with spaces around numbers and currency (e.g., "$100 revenue", not "$100revenue")
+6. Maintains a professional, expert tone appropriate for Energy Australia operations
+
+Do not include:
+- DEBUG information or debug markers
+- Raw SQL queries (unless the user specifically asked to see the SQL)
+- Raw query result arrays like ['RESS 2', '62.0', '82.7']
+- Page numbers, line numbers, or file paths from documentation
+- Technical implementation details unless relevant to the answer
+
+Provide a clean, synthesized answer that reads naturally:"""
+            
+            self._log("🤖 Synthesizing response with LLM...")
+            
+            # Call LLM
+            response = llm.invoke(synthesis_prompt)
+            
+            # Extract content from response
+            if hasattr(response, 'content'):
+                synthesized = response.content
+            elif isinstance(response, str):
+                synthesized = response
+            else:
+                synthesized = str(response)
+            
+            self._log("✅ LLM synthesis completed")
+            
+            # Append chart markers if they were present
+            synthesized = synthesized.strip()
+            if chart_markers:
+                synthesized += f"\n\n{chart_markers}"
+                self._log("📊 Chart markers preserved in synthesized response")
+            
+            return synthesized
+            
+        except Exception as e:
+            self._log(f"⚠️  LLM synthesis failed: {e}")
+            return None
     
     def _log(self, message: str):
         """Log execution steps"""
@@ -95,12 +244,26 @@ class SupervisorAgent(BaseAgent):
             self._log("📊 Routing to Data Agent")
             result = self.data_agent.process(question, context)
             self._log("✅ Data Agent completed")
+            
+            # Clean result if it has debug info (but don't synthesize - single source)
+            if result and "[Data Agent Error]" not in result:
+                cleaned = self._clean_raw_output(result, "data")
+                # Only use cleaned version if it's significantly different (has debug info)
+                if cleaned != result and len(cleaned) > len(result) * 0.5:  # At least 50% of original
+                    return cleaned
             return result
         elif docs_can_handle:
             # Route to docs agent
             self._log("📚 Routing to Docs Agent")
             result = self.docs_agent.process(question, context)
             self._log("✅ Docs Agent completed")
+            
+            # Clean result if needed (but don't synthesize - single source)
+            if result and "[Docs Agent Error]" not in result:
+                cleaned = self._clean_raw_output(result, "docs")
+                # Only use cleaned version if it's significantly different
+                if cleaned != result and len(cleaned) > len(result) * 0.5:
+                    return cleaned
             return result
         else:
             # Try data agent as default (most queries are data-related)
@@ -140,7 +303,21 @@ class SupervisorAgent(BaseAgent):
         
         self._log("✅ Both agents completed")
         
-        # Synthesize results
+        # Try to synthesize with LLM first
+        synthesized_response = None
+        if data_result and "[Data Agent Error]" not in data_result and docs_result and "[Docs Agent Error]" not in docs_result:
+            # Both agents succeeded - try LLM synthesis
+            synthesized_response = self._synthesize_with_llm(question, data_result, docs_result)
+        
+        # If synthesis succeeded, use it
+        if synthesized_response:
+            self._log("✅ Using LLM-synthesized response")
+            return synthesized_response
+        
+        # Fallback to original concatenation method (safe fallback)
+        self._log("⚠️  Using fallback concatenation method")
+        
+        # Synthesize results (original method)
         response_parts = []
         
         # Add data result if valid

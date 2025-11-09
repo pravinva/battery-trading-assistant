@@ -63,9 +63,9 @@ docs_agent = DocsAgent(index_name=INDEX_NAME, endpoint_name=ENDPOINT_NAME)
 print("✅ Data Agent initialized")
 print("✅ Docs Agent initialized")
 
-# Initialize supervisor
+# Initialize supervisor with LLM endpoint for synthesis
 print("\n🔧 Initializing Supervisor Agent...")
-supervisor = SupervisorAgent(data_agent=data_agent, docs_agent=docs_agent)
+supervisor = SupervisorAgent(data_agent=data_agent, docs_agent=docs_agent, llm_endpoint=LLM_ENDPOINT)
 print("✅ Supervisor Agent initialized")
 
 print("\n" + "=" * 80)
