@@ -1980,6 +1980,7 @@ The agent cannot proceed without Genie's answer."""
             print(f"DEBUG: ✓ Embedding chart JSON in response (type: {chart_data['type']}, title: {chart_data.get('title', 'N/A')})")
             # chart_data['json'] is already a JSON string, so we need to serialize the whole dict properly
             # json.dumps will automatically escape the inner JSON string
+            import json
             chart_marker = f"\n\n[PLOTLY_CHART_START]\n{json.dumps(chart_data)}\n[PLOTLY_CHART_END]\n"
             response_parts.append(chart_marker)
             print(f"DEBUG: Chart marker length: {len(chart_marker)}, contains START: {'PLOTLY_CHART_START' in chart_marker}")
