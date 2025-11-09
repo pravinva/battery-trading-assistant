@@ -752,6 +752,23 @@ def get_battery_info(
 
 # Tool 5: Query Genie (MCP Server or Direct API)
 @tool
+# Global variable to store execution logs for UI display
+_genie_execution_logs = []
+
+def get_genie_logs():
+    """Get and clear execution logs"""
+    global _genie_execution_logs
+    logs = _genie_execution_logs.copy()
+    _genie_execution_logs = []  # Clear after reading
+    return logs
+
+def add_genie_log(entry):
+    """Add a log entry"""
+    global _genie_execution_logs
+    import time
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+    _genie_execution_logs.append(f"[{timestamp}] {entry}")
+
 def query_genie(
     question: Annotated[str, "A natural language question about battery data. Genie will generate and execute SQL automatically."]
 ) -> str:
@@ -857,9 +874,15 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
             print(f"DEBUG: MCP Server URL: {_mcp_server_url}")
         
         # Discover available tools from MCP server
+        add_genie_log(f"🔍 Discovering MCP tools from server...")
         tools = _mcp_client.list_tools()
+        tool_names = [t.name for t in tools]
+        add_genie_log(f"✅ Found {len(tools)} MCP tools: {', '.join(tool_names)}")
+        
         if DEBUG_MODE:
-            print(f"DEBUG: Available MCP tools: {[t.name for t in tools]}")
+            print(f"DEBUG: Using MCP server to query Genie")
+            print(f"DEBUG: MCP Server URL: {_mcp_server_url}")
+            print(f"DEBUG: Available MCP tools: {tool_names}")
         
         # Find the Genie query tool
         # Tool name pattern: query_space_{genie_space_id}
@@ -894,7 +917,10 @@ def query_genie_via_mcp(question: str, is_visualization_request: bool) -> str:
             print(f"DEBUG: Calling tool with args: {tool_args}")
         
         # Call the tool
+        add_genie_log(f"📞 Calling MCP tool: {genie_tool.name}")
+        add_genie_log(f"📋 Tool arguments: {json.dumps(tool_args, indent=2)}")
         result = _mcp_client.call_tool(genie_tool.name, tool_args)
+        add_genie_log(f"✅ MCP tool call successful")
         
         if DEBUG_MODE:
             print(f"DEBUG: MCP tool result type: {type(result)}")

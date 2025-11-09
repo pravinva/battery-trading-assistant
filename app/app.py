@@ -877,6 +877,21 @@ if AGENT_AVAILABLE:
                                         if 'question' in sql_result.get('args', {}):
                                             st.markdown(f"**Natural Language Question:** {sql_result['args']['question']}")
                                         
+                                        # Get execution logs from agent module
+                                        try:
+                                            agent_script_path = Path(__file__).parent.parent / "scripts" / "02_agent_development_local.py"
+                                            spec = importlib.util.spec_from_file_location("agent_module_logs", agent_script_path)
+                                            agent_module_logs = importlib.util.module_from_spec(spec)
+                                            spec.loader.exec_module(agent_module_logs)
+                                            if hasattr(agent_module_logs, 'get_genie_logs'):
+                                                logs = agent_module_logs.get_genie_logs()
+                                                if logs:
+                                                    with st.expander("📋 Execution Logs (MCP vs Direct API)", expanded=True):
+                                                        for log_entry in logs:
+                                                            st.text(log_entry)
+                                        except Exception as e:
+                                            pass  # Silently fail if logs not available
+                                        
                                         # Extract SQL query from Genie response if present
                                         result_text = sql_result.get('result', '')
                                         if '```sql' in result_text:
