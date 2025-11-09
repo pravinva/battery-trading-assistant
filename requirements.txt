@@ -17,8 +17,7 @@ langchain-text-splitters>=0.0.1
 
 # Databricks MCP for Genie integration
 # Based on: https://docs.databricks.com/aws/en/generative-ai/mcp/managed-mcp
-databricks-mcp>=1.0.0  # Uncomment when ready to test MCP
-# Install with: pip install databricks-mcp
+databricks-mcp>=0.4.0
 
 # PDF processing
 pypdf>=3.17.0
