@@ -81,6 +81,36 @@ class SupervisorAgent(BaseAgent):
             cleaned = re.sub(r'DEBUG: SQL Query:.*?\n', '', cleaned)
             cleaned = re.sub(r'DEBUG: Query Data:.*?\n', '', cleaned)
             
+            # Remove raw JSON responses (will be synthesized instead)
+            # Try to extract meaningful data from JSON if present
+            if cleaned.strip().startswith('{') and '"query"' in cleaned:
+                # Try to extract SQL query and results from JSON
+                import json as json_module
+                try:
+                    json_data = json_module.loads(cleaned)
+                    sql_query = json_data.get('query', '')
+                    if 'statement_response' in json_data and 'result' in json_data['statement_response']:
+                        result_data = json_data['statement_response']['result']
+                        if 'data_array' in result_data:
+                            # Extract readable data
+                            rows = []
+                            for row in result_data['data_array']:
+                                if 'values' in row:
+                                    values = [v.get('string_value', v.get('double_value', v.get('int_value', ''))) for v in row['values']]
+                                    rows.append(values)
+                            if rows:
+                                # Format as readable text
+                                formatted_results = "Query Results:\n"
+                                for row in rows:
+                                    formatted_results += f"{', '.join(str(v) for v in row)}\n"
+                                if sql_query:
+                                    cleaned = f"SQL Query: {sql_query}\n\n{formatted_results}"
+                                else:
+                                    cleaned = formatted_results
+                except Exception:
+                    # If JSON parsing fails, keep original but mark for synthesis
+                    pass
+            
             # Remove excessive "Raw Query Results" if it's just arrays
             # But keep formatted SQL queries
             if '```sql' in cleaned:
@@ -94,6 +124,105 @@ class SupervisorAgent(BaseAgent):
         cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
         
         return cleaned.strip()
+    
+    def _synthesize_single_agent_response(self, question: str, raw_result: str, agent_type: str) -> Optional[str]:
+        """
+        Synthesize single-agent response if it contains raw data/JSON
+        
+        Args:
+            question: Original user question
+            raw_result: Raw output from agent
+            agent_type: "data" or "docs"
+            
+        Returns:
+            Synthesized response or None if synthesis not needed/fails
+        """
+        # Check if result contains raw JSON or needs synthesis
+        needs_synthesis = False
+        
+        if agent_type == "data":
+            # Check for raw JSON responses
+            if raw_result.strip().startswith('{') and '"query"' in raw_result:
+                needs_synthesis = True
+            # Check for raw data arrays or excessive technical details
+            elif '["' in raw_result and '"]' in raw_result and raw_result.count('[') > 3:
+                needs_synthesis = True
+            # Check for excessive technical markers
+            elif raw_result.count('🤖') > 0 and ('{"query"' in raw_result or 'statement_response' in raw_result):
+                needs_synthesis = True
+        
+        if not needs_synthesis:
+            return None
+        
+        llm = self._get_llm()
+        if not llm:
+            return None
+        
+        try:
+            # Clean input
+            cleaned_result = self._clean_raw_output(raw_result, agent_type)
+            
+            # Check for chart markers
+            chart_markers = ""
+            if "[PLOTLY_CHART_START]" in raw_result and "[PLOTLY_CHART_END]" in raw_result:
+                import re as re_module
+                chart_match = re_module.search(r'\[PLOTLY_CHART_START\].*?\[PLOTLY_CHART_END\]', raw_result, re_module.DOTALL)
+                if chart_match:
+                    chart_markers = chart_match.group(0)
+                    cleaned_result = re_module.sub(r'\[PLOTLY_CHART_START\].*?\[PLOTLY_CHART_END\]', '', cleaned_result, flags=re_module.DOTALL)
+            
+            # Build synthesis prompt
+            source_label = "Data Analysis (from SQL queries via Databricks Genie)" if agent_type == "data" else "Documentation (from technical documentation)"
+            
+            synthesis_prompt = f"""You are a helpful assistant that formats technical data into clear, readable answers.
+
+User Question: {question}
+
+{source_label}:
+{cleaned_result}
+
+Please convert this technical response into a clear, natural answer that:
+1. Directly answers the user's question in a conversational way
+2. Extracts and presents the key information (numbers, values, facts) clearly
+3. Uses proper formatting with spaces around numbers and currency (e.g., "$100 revenue", not "$100revenue")
+4. Maintains a professional, expert tone appropriate for Energy Australia operations
+5. Removes technical details like SQL queries, JSON structures, and debug information
+6. Presents data in a readable format (e.g., "RESS2 has a SoC of 82.7%" instead of raw arrays)
+
+Do not include:
+- Raw JSON structures
+- SQL queries (unless the user specifically asked to see the SQL)
+- Technical implementation details
+- Debug information
+
+Provide a clean, readable answer:"""
+            
+            self._log(f"🤖 Synthesizing {agent_type} agent response with LLM...")
+            
+            # Call LLM
+            response = llm.invoke(synthesis_prompt)
+            
+            # Extract content
+            if hasattr(response, 'content'):
+                synthesized = response.content
+            elif isinstance(response, str):
+                synthesized = response
+            else:
+                synthesized = str(response)
+            
+            self._log("✅ LLM synthesis completed")
+            
+            # Append chart markers if present
+            synthesized = synthesized.strip()
+            if chart_markers:
+                synthesized += f"\n\n{chart_markers}"
+                self._log("📊 Chart markers preserved")
+            
+            return synthesized
+            
+        except Exception as e:
+            self._log(f"⚠️  LLM synthesis failed: {e}")
+            return None
     
     def _synthesize_with_llm(self, question: str, data_result: str, docs_result: str) -> Optional[str]:
         """
@@ -251,8 +380,13 @@ Provide a clean, synthesized answer with proper citations:"""
             result = self.data_agent.process(question, context)
             self._log("✅ Data Agent completed")
             
-            # Clean result if it has debug info (but don't synthesize - single source)
+            # Check if result needs synthesis (raw JSON/data)
             if result and "[Data Agent Error]" not in result:
+                synthesized = self._synthesize_single_agent_response(question, result, "data")
+                if synthesized:
+                    return synthesized
+                
+                # Fallback: clean result if it has debug info
                 cleaned = self._clean_raw_output(result, "data")
                 # Only use cleaned version if it's significantly different (has debug info)
                 if cleaned != result and len(cleaned) > len(result) * 0.5:  # At least 50% of original
@@ -264,8 +398,13 @@ Provide a clean, synthesized answer with proper citations:"""
             result = self.docs_agent.process(question, context)
             self._log("✅ Docs Agent completed")
             
-            # Clean result if needed (but don't synthesize - single source)
+            # Check if result needs synthesis (raw data)
             if result and "[Docs Agent Error]" not in result:
+                synthesized = self._synthesize_single_agent_response(question, result, "docs")
+                if synthesized:
+                    return synthesized
+                
+                # Fallback: clean result if needed
                 cleaned = self._clean_raw_output(result, "docs")
                 # Only use cleaned version if it's significantly different
                 if cleaned != result and len(cleaned) > len(result) * 0.5:
