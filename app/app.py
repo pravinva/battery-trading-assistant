@@ -40,12 +40,16 @@ def load_agent(_file_mtime, _force_reload=False):
         if agent_script_path.exists():
             # Clear any cached module to force reload
             import sys
+            import importlib
             module_name = "agent_module"
-            # Clear ALL cached modules related to agent
-            modules_to_remove = [k for k in sys.modules.keys() if 'agent' in k.lower() or '02_agent' in k.lower()]
+            # Clear ALL cached modules related to agent - MORE AGGRESSIVE
+            modules_to_remove = [k for k in sys.modules.keys() if 'agent' in k.lower() or '02_agent' in k.lower() or 'scripts' in k.lower()]
             for mod in modules_to_remove:
                 if mod in sys.modules:
                     del sys.modules[mod]
+            
+            # Also clear importlib cache
+            importlib.invalidate_caches()
             
             # Set USE_GENIE_MCP environment variable before loading module
             # This ensures the agent module uses the correct MCP setting
