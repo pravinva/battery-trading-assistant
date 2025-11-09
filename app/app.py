@@ -739,6 +739,9 @@ for idx, message in enumerate(st.session_state.messages):
                                 if 'question' in sql_result.get('args', {}):
                                     st.markdown(f"**Natural Language Question:** {sql_result['args']['question']}")
                                 
+                                # Note: Execution logs are only available for current session queries
+                                # Historical queries won't have logs as they're cleared after reading
+                                
                                 # Extract SQL query from Genie response if present
                                 result_text = sql_result.get('result', '')
                                 if '```sql' in result_text:
