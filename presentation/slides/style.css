@@ -1,0 +1,180 @@
+/* Shared styles for all slides - 10" x 7.5" (960px x 720px) */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  width: 960px;
+  height: 720px;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background-color: #14141e;
+  color: #dcdcdc;
+  position: relative;
+}
+
+/* Title slides */
+.title-slide {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  padding: 48px;
+}
+
+.title-slide h1 {
+  font-size: 44px;
+  font-weight: bold;
+  color: #ffffff;
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.title-slide p {
+  font-size: 24px;
+  color: #969696;
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* Content slides */
+.content-slide {
+  padding: 48px;
+}
+
+.content-slide h1 {
+  font-size: 36px;
+  font-weight: bold;
+  color: #64c8ff;
+  margin-bottom: 32px;
+}
+
+.content-slide h1.red {
+  color: #ff6464;
+}
+
+.content-slide h1.green {
+  color: #64ff96;
+}
+
+.content-slide h1.yellow {
+  color: #ffc864;
+}
+
+.content-slide ul {
+  padding-left: 32px;
+  list-style-type: disc;
+}
+
+.content-slide li {
+  font-size: 22px;
+  line-height: 1.8;
+  margin-bottom: 8px;
+}
+
+/* Two-column layout */
+.two-column {
+  display: flex;
+  gap: 48px;
+  margin-top: 16px;
+}
+
+.column {
+  flex: 1;
+}
+
+.column h2 {
+  font-size: 24px;
+  font-weight: bold;
+  margin-bottom: 16px;
+}
+
+.column.left h2 {
+  color: #ff9664;
+}
+
+.column.right h2 {
+  color: #64ff96;
+}
+
+.column ul {
+  padding-left: 24px;
+}
+
+.column li {
+  font-size: 18px;
+  line-height: 1.7;
+  margin-bottom: 6px;
+}
+
+/* Code slide */
+.code-slide {
+  padding: 48px;
+}
+
+.code-slide h1 {
+  font-size: 32px;
+  font-weight: bold;
+  color: #64c8ff;
+  margin-bottom: 24px;
+}
+
+.code-box {
+  background-color: #282c34;
+  border: 1px solid #3c4048;
+  border-radius: 8px;
+  padding: 24px;
+  margin-bottom: 16px;
+}
+
+.code-box p {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 14px;
+  color: #c8c8c8;
+  white-space: pre;
+  line-height: 1.6;
+}
+
+.code-caption {
+  font-size: 16px;
+  font-style: italic;
+  color: #969696;
+  text-align: center;
+}
+
+/* Stats slide */
+.stats-slide {
+  padding: 48px;
+}
+
+.stats-slide h1 {
+  font-size: 36px;
+  font-weight: bold;
+  color: #64c8ff;
+  margin-bottom: 48px;
+}
+
+.stats-container {
+  display: flex;
+  justify-content: space-around;
+  text-align: center;
+}
+
+.stat {
+  flex: 1;
+}
+
+.stat-number {
+  font-size: 54px;
+  font-weight: bold;
+  color: #ffc864;
+  margin-bottom: 16px;
+}
+
+.stat-label {
+  font-size: 18px;
+  color: #b4b4b4;
+  line-height: 1.4;
+}

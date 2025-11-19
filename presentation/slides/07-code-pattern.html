@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="code-slide">
+    <h1>Pattern: Self-Documenting Tools</h1>
+    <div class="code-box">
+      <p>@tool
+def get_battery_status(
+    battery_id: Annotated[str,
+        "Battery ID (RESS2, DPNTBESS) or 'all'"] = "all"
+) -> str:
+    """Get current SoC and capabilities for batteries."""
+
+    # AI reads these annotations for tool selection
+    # Also serves as documentation
+    # Type hints enable testing
+    ...</p>
+    </div>
+    <p class="code-caption">Annotated types = docs + AI context + type safety</p>
+  </div>
+</body>
+</html>
